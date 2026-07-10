@@ -3,22 +3,37 @@ import cors from 'cors';
 import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
 import multer from 'multer';
+import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { existsSync, mkdirSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync } from 'fs';
 
 import { signToken, authMiddleware } from './middleware/auth.js';
-import { loadStore, getStore, saveStore, getWorkspace, addActivity } from './store.js';
+import { testConnection } from './db/index.js';
+import { runSchema } from './db/schema.js';
+import { seedDatabase } from './db/seed.js';
+import * as repo from './db/repository.js';
+import * as authRepo from './db/auth.js';
+
+dotenv.config();
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
+const LEX_API_URL = process.env.LEX_API_URL || 'http://127.0.0.1:8001';
 const UPLOADS_DIR = join(__dirname, 'uploads');
 
 if (!existsSync(UPLOADS_DIR)) {
   mkdirSync(UPLOADS_DIR, { recursive: true });
 }
 
-loadStore();
+async function initDatabase() {
+  await testConnection();
+  await runSchema();
+  await seedDatabase();
+  console.log('PostgreSQL connected and ready.');
+}
+
+await initDatabase();
 
 const app = express();
 const server = createServer(app);
@@ -28,133 +43,157 @@ app.use(express.json());
 
 const upload = multer({ dest: UPLOADS_DIR });
 
-function formatTime() {
-  return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+function getClientId(req, res) {
+  const userId = Number(req.user?.userId || req.user?.sub);
+  if (!userId || Number.isNaN(userId)) {
+    res.status(401).json({ error: 'Invalid or missing user session' });
+    return null;
+  }
+  return userId;
 }
 
-function formatDate() {
-  return new Date().toISOString().split('T')[0];
+function asyncHandler(fn) {
+  return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 }
 
 // ─── Auth ───────────────────────────────────────────────────────────────────
 
-app.post('/api/v2/auth/session', (_req, res) => {
-  const payload = {
-    sub: 'org-cl-10928',
-    name: 'Habib Corporate Solutions Ltd',
-    roles: ['CorporateClient', 'RetainerPremium']
-  };
+app.post('/api/v2/auth/register', asyncHandler(async (req, res) => {
+  const { name, email, password } = req.body;
+
+  if (!name?.trim() || !email?.trim() || !password) {
+    return res.status(400).json({ error: 'Organization name, email, and password are required' });
+  }
+
+  if (password.length < 8) {
+    return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  }
+
+  const user = await authRepo.registerUser({ name, email, password, role: 'client' });
+  const payload = authRepo.buildTokenPayload(user);
+  const token = signToken(payload);
+
+  res.status(201).json({ token, user: payload, message: 'Account created successfully' });
+}));
+
+app.post('/api/v2/auth/login', asyncHandler(async (req, res) => {
+  const { email, password } = req.body;
+
+  if (!email?.trim() || !password) {
+    return res.status(400).json({ error: 'Email and password are required' });
+  }
+
+  const user = await authRepo.loginUser({ email, password });
+
+  if (user.role !== 'client') {
+    return res.status(403).json({ error: 'This portal is for corporate clients only' });
+  }
+
+  const payload = authRepo.buildTokenPayload(user);
+  const token = signToken(payload);
+
+  res.json({ token, user: payload });
+}));
+
+app.get('/api/v2/auth/me', authMiddleware, asyncHandler(async (req, res) => {
+  const userId = Number(req.user.userId || req.user.sub);
+  const user = await authRepo.findUserById(userId);
+
+  if (!user || !user.is_active) {
+    return res.status(401).json({ error: 'User not found or inactive' });
+  }
+
+  res.json({ user: authRepo.buildTokenPayload(user) });
+}));
+
+app.post('/api/v2/auth/session', asyncHandler(async (_req, res) => {
+  const client = await repo.getDemoClient();
+  if (!client) {
+    return res.status(500).json({ error: 'Demo client not configured' });
+  }
+  const payload = authRepo.buildTokenPayload(client);
   const token = signToken(payload);
   res.json({ token, user: payload });
-});
+}));
 
 // ─── Workspace bootstrap ────────────────────────────────────────────────────
 
-app.get('/api/v2/workspace', authMiddleware, (_req, res) => {
-  res.json(getWorkspace());
-});
+app.get('/api/v2/workspace', authMiddleware, asyncHandler(async (req, res) => {
+  const clientId = await getClientId(req, res);
+  if (!clientId) return;
+  res.json(await repo.getWorkspace(clientId));
+}));
 
 // ─── Notifications ──────────────────────────────────────────────────────────
 
-app.get('/api/v2/notifications', authMiddleware, (_req, res) => {
-  res.json(getStore().notifications);
-});
+app.get('/api/v2/notifications', authMiddleware, asyncHandler(async (req, res) => {
+  const clientId = await getClientId(req, res);
+  if (!clientId) return;
+  res.json(await repo.getNotifications(clientId));
+}));
 
-app.delete('/api/v2/notifications/:id', authMiddleware, (req, res) => {
-  const store = getStore();
-  const id = Number(req.params.id);
-  store.notifications = store.notifications.filter((n) => n.id !== id);
-  saveStore();
+app.delete('/api/v2/notifications/:id', authMiddleware, asyncHandler(async (req, res) => {
+  const clientId = await getClientId(req, res);
+  if (!clientId) return;
+  await repo.dismissNotification(clientId, Number(req.params.id));
   res.json({ success: true });
-});
+}));
 
-app.delete('/api/v2/notifications', authMiddleware, (_req, res) => {
-  const store = getStore();
-  store.notifications = [];
-  saveStore();
+app.delete('/api/v2/notifications', authMiddleware, asyncHandler(async (req, res) => {
+  const clientId = await getClientId(req, res);
+  if (!clientId) return;
+  await repo.clearNotifications(clientId);
   res.json({ success: true });
-});
+}));
 
 // ─── Orders ─────────────────────────────────────────────────────────────────
 
-app.get('/api/v2/orders', authMiddleware, (_req, res) => {
-  res.json(getStore().orders);
-});
+app.get('/api/v2/orders', authMiddleware, asyncHandler(async (req, res) => {
+  const clientId = await getClientId(req, res);
+  if (!clientId) return;
+  res.json(await repo.getOrders(clientId));
+}));
 
-app.post('/api/v2/orders', authMiddleware, (req, res) => {
+app.post('/api/v2/orders', authMiddleware, asyncHandler(async (req, res) => {
+  const clientId = await getClientId(req, res);
+  if (!clientId) return;
+
   const { templateId, templateName, formData } = req.body;
   if (!templateId || !templateName) {
     return res.status(400).json({ error: 'templateId and templateName are required' });
   }
 
-  const store = getStore();
-  const newOrder = {
-    id: String(store.nextOrderId++),
-    templateId,
-    templateName,
-    status: 'Pending Payment',
-    date: formatDate(),
-    formData: formData || {}
-  };
-
-  store.orders.unshift(newOrder);
-  store.stats.activeOrders += 1;
-
-  addActivity({
-    id: `act-${Date.now()}`,
-    type: 'order',
-    langKey: 'DocStarted',
-    params: { doc: templateName },
-    timestamp: new Date().toISOString(),
-    timeAgo: 'Just now'
-  });
-
-  saveStore();
-  res.status(201).json(newOrder);
-});
+  const order = await repo.createOrder(clientId, { templateId, templateName, formData });
+  res.status(201).json(order);
+}));
 
 // ─── Matters (VLO) ──────────────────────────────────────────────────────────
 
-app.get('/api/v2/vlo/matters', authMiddleware, (_req, res) => {
-  res.json(getStore().matters);
-});
+app.get('/api/v2/vlo/matters', authMiddleware, asyncHandler(async (req, res) => {
+  const clientId = await getClientId(req, res);
+  if (!clientId) return;
+  res.json(await repo.getMatters(clientId));
+}));
 
-app.post('/api/v2/vlo/matters', authMiddleware, upload.array('files', 10), (req, res) => {
+app.post('/api/v2/vlo/matters', authMiddleware, upload.array('files', 10), asyncHandler(async (req, res) => {
+  const clientId = await getClientId(req, res);
+  if (!clientId) return;
+
   const { title, description } = req.body;
   if (!title || !description) {
     return res.status(400).json({ error: 'title and description are required' });
   }
 
   const files = (req.files || []).map((f) => f.originalname || f.filename);
+  const matter = await repo.createMatter(clientId, { title, description, files });
+  res.status(201).json(matter);
+}));
 
-  const store = getStore();
-  const newMatter = {
-    id: `m-${Date.now()}`,
-    title,
-    status: 'Awaiting Counsel Vetting',
-    date: formatDate(),
-    description,
-    files
-  };
+app.get('/api/vlo/matters/download/:id', authMiddleware, asyncHandler(async (req, res) => {
+  const clientId = await getClientId(req, res);
+  if (!clientId) return;
 
-  store.matters.unshift(newMatter);
-
-  addActivity({
-    id: `act-${Date.now()}`,
-    type: 'matter',
-    langKey: 'UploadMatter',
-    params: { title },
-    timestamp: new Date().toISOString(),
-    timeAgo: 'Just now'
-  });
-
-  saveStore();
-  res.status(201).json(newMatter);
-});
-
-app.get('/api/vlo/matters/download/:id', authMiddleware, (req, res) => {
-  const store = getStore();
-  const matter = store.matters.find((m) => m.id === req.params.id);
+  const matter = await repo.getMatterById(clientId, req.params.id);
   if (!matter) {
     return res.status(404).json({ error: 'Matter not found' });
   }
@@ -179,189 +218,178 @@ app.get('/api/vlo/matters/download/:id', authMiddleware, (req, res) => {
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
   res.send(content);
-});
+}));
 
 // ─── Messages ───────────────────────────────────────────────────────────────
 
-app.get('/api/v2/messages/threads', authMiddleware, (_req, res) => {
-  res.json(getStore().threads);
-});
+app.get('/api/v2/messages/threads', authMiddleware, asyncHandler(async (req, res) => {
+  const clientId = await getClientId(req, res);
+  if (!clientId) return;
+  res.json(await repo.getThreads(clientId));
+}));
 
-app.post('/api/v2/messages/threads/:id/messages', authMiddleware, (req, res) => {
+app.post('/api/v2/messages/threads/:id/messages', authMiddleware, asyncHandler(async (req, res) => {
+  const clientId = await getClientId(req, res);
+  if (!clientId) return;
+
   const { text, attachments = [] } = req.body;
   if (!text && attachments.length === 0) {
     return res.status(400).json({ error: 'Message text or attachments required' });
   }
 
-  const store = getStore();
-  const thread = store.threads.find((t) => t.id === req.params.id);
-  if (!thread) {
-    return res.status(404).json({ error: 'Thread not found' });
-  }
-
-  const newMsg = {
-    id: Date.now(),
-    sender: 'user',
-    text: text || '',
-    attachments,
-    timestamp: formatTime()
-  };
-
-  thread.messages.push(newMsg);
-  thread.lastMessage = text || 'File Attachment';
-  thread.lastUpdated = 'Just now';
-
-  addActivity({
-    id: `act-${Date.now()}`,
-    type: 'message',
-    langKey: 'Message',
-    params: { id: req.params.id.replace('t-', '') },
-    timestamp: new Date().toISOString(),
-    timeAgo: 'Just now'
-  });
-
-  saveStore();
-  res.status(201).json(newMsg);
-});
+  const msg = await repo.sendMessage(clientId, req.params.id, { text, attachments });
+  res.status(201).json(msg);
+}));
 
 // ─── Appointments ───────────────────────────────────────────────────────────
 
-app.post('/api/v2/appointments', authMiddleware, (req, res) => {
+app.post('/api/v2/appointments', authMiddleware, asyncHandler(async (req, res) => {
+  const clientId = await getClientId(req, res);
+  if (!clientId) return;
+
   const { lawyerName, slot, mode } = req.body;
   if (!lawyerName) {
     return res.status(400).json({ error: 'lawyerName is required' });
   }
 
-  const store = getStore();
-  store.stats.appointments += 1;
-
-  addActivity({
-    id: `act-${Date.now()}`,
-    type: 'booking',
-    langKey: 'Booked',
-    params: { name: lawyerName },
-    timestamp: new Date().toISOString(),
-    timeAgo: 'Just now'
-  });
-
-  saveStore();
-  res.status(201).json({ success: true, lawyerName, slot, mode });
-});
+  const result = await repo.bookAppointment(clientId, { lawyerName, slot, mode });
+  res.status(201).json(result);
+}));
 
 // ─── Subscription ───────────────────────────────────────────────────────────
 
-app.get('/api/v2/subscription', authMiddleware, (_req, res) => {
-  res.json(getStore().subscription);
-});
+app.get('/api/v2/subscription', authMiddleware, asyncHandler(async (req, res) => {
+  const clientId = await getClientId(req, res);
+  if (!clientId) return;
+  res.json(await repo.getSubscription(clientId));
+}));
 
-app.post('/api/v2/subscription/cancel', authMiddleware, (_req, res) => {
-  const store = getStore();
-  store.stats.retainerTier = 'None';
-
-  addActivity({
-    id: `act-${Date.now()}`,
-    type: 'billing',
-    langKey: 'Cancelled',
-    params: {},
-    timestamp: new Date().toISOString(),
-    timeAgo: 'Just now'
-  });
-
-  saveStore();
+app.post('/api/v2/subscription/cancel', authMiddleware, asyncHandler(async (req, res) => {
+  const clientId = await getClientId(req, res);
+  if (!clientId) return;
+  await repo.cancelSubscription(clientId);
   res.json({ success: true });
-});
+}));
 
 // ─── Invoices ───────────────────────────────────────────────────────────────
 
-app.get('/api/v2/invoices', authMiddleware, (_req, res) => {
-  res.json(getStore().invoices);
-});
+app.get('/api/v2/invoices', authMiddleware, asyncHandler(async (req, res) => {
+  const clientId = await getClientId(req, res);
+  if (!clientId) return;
+  res.json(await repo.getInvoices(clientId));
+}));
 
 // ─── Evaluations ────────────────────────────────────────────────────────────
 
-app.post('/api/v2/evaluations', authMiddleware, (req, res) => {
+app.post('/api/v2/evaluations', authMiddleware, asyncHandler(async (req, res) => {
+  const clientId = await getClientId(req, res);
+  if (!clientId) return;
+
   const { rating, comment, threadId } = req.body;
   if (!rating) {
     return res.status(400).json({ error: 'rating is required' });
   }
-  res.status(201).json({ success: true, rating, comment, threadId });
-});
+
+  const result = await repo.submitEvaluation(clientId, { rating, comment, threadId });
+  res.status(201).json(result);
+}));
 
 // ─── Lawyers ────────────────────────────────────────────────────────────────
 
-app.get('/api/v2/lawyers', authMiddleware, (req, res) => {
-  const store = getStore();
-  let lawyers = store.lawyers;
-
+app.get('/api/v2/lawyers', authMiddleware, asyncHandler(async (req, res) => {
   const { city, practice, lang } = req.query;
-  if (city) lawyers = lawyers.filter((l) => l.city.toLowerCase() === city.toLowerCase());
-  if (practice) lawyers = lawyers.filter((l) => l.practiceArea.toLowerCase().includes(practice.toLowerCase()));
-  if (lang) lawyers = lawyers.filter((l) => l.language.toLowerCase() === lang.toLowerCase());
+  res.json(await repo.getLawyers({ city, practice, lang }));
+}));
 
-  res.json(lawyers);
-});
+// ─── LEX AI proxy (Django) ─────────────────────────────────────────────────
+
+async function proxyToLexAi(req, res, djangoPath) {
+  try {
+    const url = `${LEX_API_URL}${djangoPath}`;
+    const options = {
+      method: req.method,
+      headers: { 'Content-Type': 'application/json' }
+    };
+
+    if (req.method !== 'GET' && req.body) {
+      options.body = JSON.stringify(req.body);
+    }
+
+    const response = await fetch(url, options);
+    const data = await response.json().catch(() => ({ error: 'Invalid LEX AI response' }));
+    res.status(response.status).json(data);
+  } catch (err) {
+    console.error('LEX AI proxy error:', err.message);
+    res.status(502).json({ error: 'LEX AI service unavailable' });
+  }
+}
+
+app.post('/api/v1/lex/chat/', asyncHandler(async (req, res) => {
+  await proxyToLexAi(req, res, '/api/v1/lex/chat/');
+}));
+
+app.get('/api/v1/lex/sessions/', asyncHandler(async (req, res) => {
+  await proxyToLexAi(req, res, '/api/v1/lex/sessions/');
+}));
+
+app.get('/api/v1/lex/sessions/:sessionKey/', asyncHandler(async (req, res) => {
+  await proxyToLexAi(req, res, `/api/v1/lex/sessions/${req.params.sessionKey}/`);
+}));
 
 // ─── Health check ───────────────────────────────────────────────────────────
 
-app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', service: 'NexusLexis LEX API v2.0' });
+app.get('/api/health', asyncHandler(async (_req, res) => {
+  const db = await testConnection();
+  res.json({ status: 'ok', service: 'NexusLexis LEX API v2.0', database: 'connected', time: db.now });
+}));
+
+// ─── Error handler ──────────────────────────────────────────────────────────
+
+app.use((err, _req, res, _next) => {
+  console.error(err);
+  res.status(500).json({ error: err.message || 'Internal server error' });
 });
 
-// ─── LEX WebSocket ──────────────────────────────────────────────────────────
+// ─── LEX WebSocket (proxies to Django REST) ─────────────────────────────────
 
 const wss = new WebSocketServer({ server, path: '/api/lex/ws' });
 
-function generateLexResponse(query, lang) {
-  const q = query.toLowerCase();
-  const isUrdu = lang === 'ur' || /[\u0600-\u06FF]/.test(query);
-
-  let text = isUrdu
-    ? 'میں پاکستان کے قوانین کے بارے میں آپ کی مدد کے لیے یہاں ہوں۔'
-    : 'I am scanning the statutes of Pakistan. For comprehensive guidelines, consider consulting with high court advocates.';
-  let shortcuts = [];
-
-  if (q.includes('lawyer') || q.includes('وکیل') || q.includes('advocate')) {
-    text = isUrdu
-      ? 'ہمارے پاس مختلف شہروں کے تصدیق شدہ وکلاء موجود ہیں۔ نیچے دیے گئے بٹن سے وکیل تلاش کریں۔'
-      : 'You can query our professional directories to find advocates. Use the link shortcut below.';
-    shortcuts = [{ label: 'Find a Lawyer', route: '/find-a-lawyer', icon: 'lawyer' }];
-  } else if (q.includes('document') || q.includes('دستاویز') || q.includes('agreement') || q.includes('secp')) {
-    text = isUrdu
-      ? 'معاہدہ یا کمپنی رجسٹریشن ڈرافٹ کے لیے ہمارے پاس فارم ٹیمپلیٹس موجود ہیں۔'
-      : 'Choose from our dynamic intake templates to compile statutory document packages.';
-    shortcuts = [{ label: 'Knowledge Bank', route: '/account/knowledge', icon: 'document' }];
-  } else if (q.includes('calculator') || q.includes('فیس') || q.includes('fee')) {
-    text = isUrdu
-      ? 'نیکسس فیس کیلکولیٹر سے آپ مختلف قوانین اور ڈرافٹ فیسیں چیک کر سکتے ہیں۔'
-      : 'Open the knowledge fee calculator app to check SECP or IPO registration pricing.';
-    shortcuts = [{ label: 'Fee Calculators', route: '/knowledge/calculators', icon: 'calculator' }];
-  } else if (q.includes('retainer') || q.includes('vlo') || q.includes('corporate')) {
-    text = isUrdu
-      ? 'آپ اپنے کارپوریٹ ریٹینر ورک اسپیس میں معاملات جمع کرا سکتے ہیں۔'
-      : 'Access your Corporate Retainer workspace to submit matters for counsel review.';
-    shortcuts = [{ label: 'Corporate Retainer', route: '/account/vlo', icon: 'document' }];
-  } else if (q.includes('message') || q.includes('پیغام')) {
-    text = isUrdu
-      ? 'آپ اپنے وکیل کے ساتھ محفوظ پیغامات کے ذریعے رابطہ کر سکتے ہیں۔'
-      : 'Communicate securely with your assigned advocates via the messaging hub.';
-    shortcuts = [{ label: 'Messages', route: '/account/messages', icon: 'lawyer' }];
-  }
-
-  return { text, shortcuts };
+function mapLexWsResponse(data) {
+  const isUrdu = data.language === 'UR' || /[\u0600-\u06FF]/.test(data.response || '');
+  const shortcuts = data.show_lawyer
+    ? [{ label: isUrdu ? 'وکیل تلاش کریں ←' : 'Find a Lawyer →', route: '/find-a-lawyer', icon: 'lawyer' }]
+    : [];
+  return { text: data.response, shortcuts };
 }
 
 wss.on('connection', (ws) => {
-  ws.on('message', (raw) => {
+  ws.on('message', async (raw) => {
     try {
-      const { query, lang } = JSON.parse(raw.toString());
-      const response = generateLexResponse(query || '', lang || 'en');
-      setTimeout(() => {
-        if (ws.readyState === ws.OPEN) {
-          ws.send(JSON.stringify(response));
-        }
-      }, 600);
+      const { query: userQuery, session_key: sessionKey } = JSON.parse(raw.toString());
+      const response = await fetch(`${LEX_API_URL}/api/v1/lex/chat/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: userQuery || '',
+          session_key: sessionKey || `ws_${Date.now()}`
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('LEX AI request failed');
+      }
+
+      const data = await response.json();
+      if (ws.readyState === ws.OPEN) {
+        ws.send(JSON.stringify(mapLexWsResponse(data)));
+      }
     } catch {
-      ws.send(JSON.stringify({ text: 'Sorry, I could not process that request.', shortcuts: [] }));
+      if (ws.readyState === ws.OPEN) {
+        ws.send(JSON.stringify({
+          text: 'LEX AI is currently unavailable. Please try again shortly.',
+          shortcuts: []
+        }));
+      }
     }
   });
 });

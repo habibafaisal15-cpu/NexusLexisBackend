@@ -76,56 +76,7 @@ const DEFAULT_DATA = {
     { id: 'INV-2026-001', category: 'Growth Retainer Plan (Monthly Subscription)', date: '2026-07-01', price: 'Rs. 45,000' },
     { id: 'INV-2026-002', category: 'SECP Articles of Association Prep (Document Pack)', date: '2026-07-05', price: 'Rs. 12,000' }
   ],
-  lawyers: [
-    {
-      id: '1',
-      name: 'Mian Ali Raza',
-      city: 'Lahore',
-      practiceArea: 'Corporate law',
-      language: 'English',
-      stars: 5,
-      bio: 'Advocate High Court. Specializes in corporate restructuring, SECP filings, and tax litigation with over 12 years of experience.',
-      onlineFee: 'Rs. 4,500',
-      inPersonFee: 'Rs. 8,000',
-      image: 'https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&q=80&w=256'
-    },
-    {
-      id: '2',
-      name: 'Aisha Chaudhry',
-      city: 'Islamabad',
-      practiceArea: 'Intellectual property',
-      language: 'English',
-      stars: 4.8,
-      bio: 'IP legal specialist representing global brands in patent registration, copyright disputes, and trademark enforcement under IPO Pakistan regulations.',
-      onlineFee: 'Rs. 3,500',
-      inPersonFee: 'Rs. 6,000',
-      image: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=256'
-    },
-    {
-      id: '3',
-      name: 'Zameeruddin Ahmed',
-      city: 'Karachi',
-      practiceArea: 'Property law',
-      language: 'Urdu',
-      stars: 4.9,
-      bio: 'Expert civil advocate focusing on partition suits, property disputes, Land Revenue Act compliance, and Power of Attorney validation.',
-      onlineFee: 'Rs. 5,000',
-      inPersonFee: 'Rs. 10,000',
-      image: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&q=80&w=256'
-    },
-    {
-      id: '4',
-      name: 'Sanaullah Khan',
-      city: 'Peshawar',
-      practiceArea: 'Family law',
-      language: 'Urdu',
-      stars: 4.7,
-      bio: 'Advocate specializing in family settlement, child custody disputes, divorce filings, and inheritance allocations according to local statutes.',
-      onlineFee: 'Rs. 3,000',
-      inPersonFee: 'Rs. 5,000',
-      image: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?auto=format&fit=crop&q=80&w=256'
-    }
-  ],
+  lawyers: [],
   nextNotificationId: 3,
   nextOrderId: 9000
 };
