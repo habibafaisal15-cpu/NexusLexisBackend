@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { authMiddleware, getUserId } from '../middleware/auth.js';
 import * as repo from '../db/repository.js';
-import { asyncHandler } from '../../shared/lib/asyncHandler.js';
+import { asyncHandler } from '../shared/lib/asyncHandler.js';
 
 function getAuthUserId(req, res) {
   const userId = getUserId(req);

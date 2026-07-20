@@ -1,0 +1,2 @@
+-- OTP signup functions are defined in backend/db/full_schema.sql (canonical schema).
+-- This file is kept for reference only; auth_backend/db/seed.js applies full_schema.sql.

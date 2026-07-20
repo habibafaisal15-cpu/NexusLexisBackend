@@ -1,7 +1,7 @@
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { query } from './index.js';
-import { validateEmailForSignup } from '../../shared/validation/email.js';
+import { validateEmailForSignup } from '../shared/validation/email.js';
 
 export async function findUserByEmail(email) {
   const result = await query(

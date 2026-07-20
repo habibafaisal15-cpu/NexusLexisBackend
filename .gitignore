@@ -1,7 +1,16 @@
 node_modules/
+dist/
 uploads/
+backend/data/
+backend/data/workspace.json
 .env
 .env.*
 !.env.example
 *.log
 .DS_Store
+backend/schema_raw.txt
+backend/schema_extracted.sql
+**/__pycache__/
+*.py[cod]
+nexus_lexus_project/**/db.sqlite3
+nexuslexis3.0/

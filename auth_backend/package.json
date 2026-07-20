@@ -1,0 +1,26 @@
+{
+  "name": "nexuslexis-auth-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch server.js",
+    "start": "node server.js",
+    "db:migrate": "node db/migrate.js",
+    "db:check-otp": "node scripts/check-otp-db.mjs",
+    "test:smtp": "node scripts/test-smtp.mjs",
+    "test:email": "node scripts/verify-email-config.mjs",
+    "test:email:send": "node scripts/test-email-send.mjs",
+    "setup:graph-mail": "node scripts/setup-graph-mail.mjs"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "google-auth-library": "^9.15.1",
+    "jsonwebtoken": "^9.0.2",
+    "nodemailer": "^9.0.3",
+    "pg": "^8.13.1"
+  }
+}

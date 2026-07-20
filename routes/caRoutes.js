@@ -3,7 +3,7 @@ import multer from 'multer';
 import { authMiddleware, getUserId } from '../middleware/auth.js';
 import * as pro from '../db/professionalRepository.js';
 import { dismissNotification, clearNotifications } from '../db/repository.js';
-import { asyncHandler } from '../../shared/lib/asyncHandler.js';
+import { asyncHandler } from '../shared/lib/asyncHandler.js';
 
 const upload = multer({ dest: 'uploads/' });
 

@@ -18,7 +18,7 @@ import { runSchema } from './db/schema.js';
 import { seedDatabase } from './db/seed.js';
 import * as repo from './db/repository.js';
 import * as authRepo from './db/auth.js';
-import { asyncHandler } from '../shared/lib/asyncHandler.js';
+import { asyncHandler } from './shared/lib/asyncHandler.js';
 
 dotenv.config();
 
