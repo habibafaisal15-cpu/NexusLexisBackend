@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "node --watch server.js",
     "start": "node server.js",
-    "db:migrate": "node db/migrate.js"
+    "db:migrate": "node db/cli/migrate.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

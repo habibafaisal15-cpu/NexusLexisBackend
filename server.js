@@ -9,17 +9,23 @@ import { dirname, join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 
 import { signToken, authMiddleware } from './middleware/auth.js';
+import { createLawyerRouter } from './routes/lawyerRoutes.js';
+import { createMessageRouter } from './routes/messageRoutes.js';
+import { createCaRouter } from './routes/caRoutes.js';
+import { seedProfessionalDemoData } from './db/professionalSeed.js';
 import { testConnection } from './db/index.js';
 import { runSchema } from './db/schema.js';
 import { seedDatabase } from './db/seed.js';
 import * as repo from './db/repository.js';
 import * as authRepo from './db/auth.js';
+import { asyncHandler } from '../shared/lib/asyncHandler.js';
 
 dotenv.config();
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
 const LEX_API_URL = process.env.LEX_API_URL || 'http://127.0.0.1:8001';
+const AUTH_API_URL = process.env.AUTH_API_URL || 'http://127.0.0.1:3001';
 const UPLOADS_DIR = join(__dirname, 'uploads');
 
 if (!existsSync(UPLOADS_DIR)) {
@@ -30,6 +36,9 @@ async function initDatabase() {
   await testConnection();
   await runSchema();
   await seedDatabase();
+  if (process.env.SEED_DEMO === 'true') {
+    await seedProfessionalDemoData();
+  }
   console.log('PostgreSQL connected and ready.');
 }
 
@@ -38,8 +47,18 @@ await initDatabase();
 const app = express();
 const server = createServer(app);
 
-app.use(cors());
+const corsOrigins = (process.env.FRONTEND_URLS || 'http://localhost:5175,http://localhost:5173')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+app.use(cors({
+  origin: process.env.CORS_ALLOW_ALL === 'true' ? true : corsOrigins,
+  credentials: true,
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Client-Role', 'X-Workspace-Context', 'ngrok-skip-browser-warning']
+}));
 app.use(express.json());
+app.use('/uploads', express.static(UPLOADS_DIR));
 
 const upload = multer({ dest: UPLOADS_DIR });
 
@@ -52,9 +71,38 @@ function getClientId(req, res) {
   return userId;
 }
 
-function asyncHandler(fn) {
-  return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+// ─── Auth API proxy (auth_backend) — enables single ngrok tunnel for frontend devs ─
+
+async function proxyToAuthApi(req, res) {
+  try {
+    const url = `${AUTH_API_URL}/api/auth${req.url}`;
+    const headers = { 'Content-Type': 'application/json' };
+    if (req.headers.authorization) {
+      headers.Authorization = req.headers.authorization;
+    }
+
+    const options = {
+      method: req.method,
+      headers
+    };
+
+    if (req.method !== 'GET' && req.method !== 'HEAD' && req.body && Object.keys(req.body).length) {
+      options.body = JSON.stringify(req.body);
+    }
+
+    const response = await fetch(url, options);
+    const text = await response.text();
+    const contentType = response.headers.get('content-type');
+    res.status(response.status);
+    if (contentType) res.setHeader('Content-Type', contentType);
+    res.send(text);
+  } catch (err) {
+    console.error('Auth API proxy error:', err.message);
+    res.status(502).json({ error: 'Auth API service unavailable' });
+  }
 }
+
+app.use('/api/auth', asyncHandler(proxyToAuthApi));
 
 // ─── Auth ───────────────────────────────────────────────────────────────────
 
@@ -115,6 +163,14 @@ app.post('/api/v2/auth/session', asyncHandler(async (_req, res) => {
   const token = signToken(payload);
   res.json({ token, user: payload });
 }));
+
+// ─── Lawyer & CA dashboards (mainsite frontend) ─────────────────────────────
+
+app.use('/api/v2/lawyer', createLawyerRouter(LEX_API_URL));
+app.use('/api/v2/messages', createMessageRouter());
+app.use('/api/v2/lawyer/messages', createMessageRouter());
+app.use('/api/v2/ca/messages', createMessageRouter());
+app.use('/api/v2/ca', createCaRouter());
 
 // ─── Workspace bootstrap ────────────────────────────────────────────────────
 
@@ -220,40 +276,64 @@ app.get('/api/vlo/matters/download/:id', authMiddleware, asyncHandler(async (req
   res.send(content);
 }));
 
-// ─── Messages ───────────────────────────────────────────────────────────────
-
-app.get('/api/v2/messages/threads', authMiddleware, asyncHandler(async (req, res) => {
-  const clientId = await getClientId(req, res);
-  if (!clientId) return;
-  res.json(await repo.getThreads(clientId));
-}));
-
-app.post('/api/v2/messages/threads/:id/messages', authMiddleware, asyncHandler(async (req, res) => {
-  const clientId = await getClientId(req, res);
-  if (!clientId) return;
-
-  const { text, attachments = [] } = req.body;
-  if (!text && attachments.length === 0) {
-    return res.status(400).json({ error: 'Message text or attachments required' });
-  }
-
-  const msg = await repo.sendMessage(clientId, req.params.id, { text, attachments });
-  res.status(201).json(msg);
-}));
-
 // ─── Appointments ───────────────────────────────────────────────────────────
 
 app.post('/api/v2/appointments', authMiddleware, asyncHandler(async (req, res) => {
   const clientId = await getClientId(req, res);
   if (!clientId) return;
 
-  const { lawyerName, slot, mode } = req.body;
-  if (!lawyerName) {
-    return res.status(400).json({ error: 'lawyerName is required' });
+  const {
+    lawyerName,
+    lawyerProfileId,
+    caName,
+    caProfileId,
+    professionalRole,
+    slot,
+    mode,
+    intake,
+    clientCity,
+  } = req.body;
+
+  const isCaBooking =
+    professionalRole === 'CA'
+    || caProfileId
+    || caName;
+
+  if (isCaBooking) {
+    if (!caProfileId && !caName) {
+      return res.status(400).json({ error: 'caProfileId or caName is required for CA bookings' });
+    }
+    const result = await repo.bookCaAppointment(clientId, {
+      caProfileId,
+      caName,
+      slot,
+      mode,
+      intake,
+      clientCity,
+    });
+    return res.status(201).json(result);
   }
 
-  const result = await repo.bookAppointment(clientId, { lawyerName, slot, mode });
+  if (!lawyerName && !lawyerProfileId) {
+    return res.status(400).json({ error: 'lawyerName or lawyerProfileId is required' });
+  }
+
+  const result = await repo.bookAppointment(clientId, {
+    lawyerName,
+    lawyerProfileId,
+    slot,
+    mode,
+    intake: clientCity?.trim()
+      ? `City: ${clientCity.trim()}${intake?.trim() ? `\n\n${intake.trim()}` : ''}`
+      : intake,
+  });
   res.status(201).json(result);
+}));
+
+app.get('/api/v2/appointments', authMiddleware, asyncHandler(async (req, res) => {
+  const clientId = await getClientId(req, res);
+  if (!clientId) return;
+  res.json(await repo.getClientAppointments(clientId));
 }));
 
 // ─── Subscription ───────────────────────────────────────────────────────────
@@ -296,6 +376,16 @@ app.post('/api/v2/evaluations', authMiddleware, asyncHandler(async (req, res) =>
 
 // ─── Lawyers ────────────────────────────────────────────────────────────────
 
+app.get('/api/v2/lawyers/public', asyncHandler(async (req, res) => {
+  const { city, practice, lang } = req.query;
+  res.json(await repo.getLawyers({ city, practice, lang, verifiedOnly: true }));
+}));
+
+app.get('/api/v2/cas/public', asyncHandler(async (req, res) => {
+  const { city, practice, lang } = req.query;
+  res.json(await repo.getCas({ city, practice, lang, verifiedOnly: true }));
+}));
+
 app.get('/api/v2/lawyers', authMiddleware, asyncHandler(async (req, res) => {
   const { city, practice, lang } = req.query;
   res.json(await repo.getLawyers({ city, practice, lang }));
@@ -305,7 +395,8 @@ app.get('/api/v2/lawyers', authMiddleware, asyncHandler(async (req, res) => {
 
 async function proxyToLexAi(req, res, djangoPath) {
   try {
-    const url = `${LEX_API_URL}${djangoPath}`;
+    const query = new URLSearchParams(req.query).toString();
+    const url = `${LEX_API_URL}${djangoPath}${query ? `?${query}` : ''}`;
     const options = {
       method: req.method,
       headers: { 'Content-Type': 'application/json' }

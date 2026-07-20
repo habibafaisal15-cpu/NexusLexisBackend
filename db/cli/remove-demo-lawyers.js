@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { query, pool } from './index.js';
+import { query, pool } from '../index.js';
 
 await query(`
   DELETE FROM messages

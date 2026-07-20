@@ -1,0 +1,1 @@
+-- Superseded by ../full_schema.sql (kept for reference).

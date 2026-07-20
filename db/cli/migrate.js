@@ -1,7 +1,7 @@
 import dotenv from 'dotenv';
-import { pool } from './index.js';
-import { runSchema } from './schema.js';
-import { seedDatabase } from './seed.js';
+import { pool } from '../index.js';
+import { runSchema } from '../schema.js';
+import { seedDatabase } from '../seed.js';
 
 dotenv.config();
 

@@ -21,7 +21,9 @@ function formatPrice(amount) {
 }
 
 function formatTimeAgo(date) {
-  const diff = Date.now() - new Date(date).getTime();
+  const ts = new Date(date).getTime();
+  if (!Number.isFinite(ts)) return 'Just now';
+  const diff = Date.now() - ts;
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return 'Just now';
   if (mins < 60) return `${mins} mins ago`;
@@ -52,15 +54,20 @@ export async function addActivity(clientId, type, langKey, params = {}) {
 }
 
 export async function getStats(clientId) {
-  const [orders, appointments, subscription, unread] = await Promise.all([
+  const [orders, appointments, subscription, unread, matters] = await Promise.all([
     query(
       `SELECT COUNT(*)::int AS count FROM service_orders
        WHERE client_id = $1 AND status IN ('pending_payment', 'processing', 'in_progress')`,
       [clientId]
     ),
     query(
-      `SELECT COUNT(*)::int AS count FROM appointments
-       WHERE client_id = $1 AND status IN ('pending', 'confirmed')`,
+      `SELECT (
+         (SELECT COUNT(*)::int FROM appointments
+          WHERE client_id = $1 AND status IN ('pending', 'confirmed'))
+         +
+         (SELECT COUNT(*)::int FROM ca_appointments
+          WHERE client_id = $1 AND status IN ('pending', 'confirmed'))
+       ) AS count`,
       [clientId]
     ),
     query(
@@ -75,39 +82,46 @@ export async function getStats(clientId) {
       `SELECT COUNT(*)::int AS count FROM messages
        WHERE recipient_id = $1 AND is_read = FALSE`,
       [clientId]
+    ),
+    query(
+      `SELECT COUNT(*)::int AS count FROM vlo_matters vm
+       JOIN vlo_subscriptions vs ON vs.id = vm.subscription_id
+       WHERE vs.client_id = $1 AND vm.status NOT IN ('completed')`,
+      [clientId]
     )
   ]);
 
   return {
     activeOrders: orders.rows[0]?.count || 0,
+    activeMatters: matters.rows[0]?.count || 0,
     appointments: appointments.rows[0]?.count || 0,
     retainerTier: subscription.rows[0]?.plan_name || 'None',
     unreadMessages: unread.rows[0]?.count || 0
   };
 }
 
-export async function getNotifications(clientId) {
+export async function getNotifications(userId, audience = 'client') {
   const result = await query(
-    `SELECT id, body AS text, link AS route
+    `SELECT id, title, body AS text, link AS route, notification_type AS type, created_at AS "createdAt"
      FROM notifications
-     WHERE user_id = $1 AND is_read = FALSE
+     WHERE user_id = $1 AND audience = $2 AND is_read = FALSE
      ORDER BY created_at DESC`,
-    [clientId]
+    [userId, audience]
   );
   return result.rows;
 }
 
-export async function dismissNotification(clientId, id) {
+export async function dismissNotification(userId, id, audience = 'client') {
   await query(
-    'UPDATE notifications SET is_read = TRUE WHERE id = $1 AND user_id = $2',
-    [id, clientId]
+    'UPDATE notifications SET is_read = TRUE WHERE id = $1 AND user_id = $2 AND audience = $3',
+    [id, userId, audience]
   );
 }
 
-export async function clearNotifications(clientId) {
+export async function clearNotifications(userId, audience = 'client') {
   await query(
-    'UPDATE notifications SET is_read = TRUE WHERE user_id = $1 AND is_read = FALSE',
-    [clientId]
+    'UPDATE notifications SET is_read = TRUE WHERE user_id = $1 AND audience = $2 AND is_read = FALSE',
+    [userId, audience]
   );
 }
 
@@ -171,6 +185,14 @@ export async function createOrder(clientId, { templateId, templateName, formData
   );
 
   await addActivity(clientId, 'order', 'DocStarted', { doc: templateName });
+
+  await createNotification(clientId, {
+    title: 'Document Order Submitted',
+    body: `Your custom document request for "${templateName}" (Order #${orderNumber}) has been submitted and is pending payment.`,
+    type: 'order',
+    link: '/account/orders',
+    audience: 'client',
+  });
 
   const row = result.rows[0];
   return {
@@ -252,6 +274,31 @@ export async function createMatter(clientId, { title, description, files = [] })
 
   await addActivity(clientId, 'matter', 'UploadMatter', { title });
 
+  const subInfo = await query(
+    `SELECT vs.assigned_lawyer_id FROM vlo_subscriptions vs WHERE vs.id = $1`,
+    [sub.rows[0].id]
+  );
+  const assignedLawyerUserId = subInfo.rows[0]?.assigned_lawyer_id;
+  const clientName = await getUserDisplayName(clientId);
+
+  await createNotification(clientId, {
+    title: 'VLO Matter Submitted',
+    body: `Your matter "${title}" has been submitted and is awaiting counsel review.`,
+    type: 'vlo',
+    link: '/account/vlo',
+    audience: 'client',
+  });
+
+  if (assignedLawyerUserId) {
+    await createNotification(assignedLawyerUserId, {
+      title: 'New VLO Matter',
+      body: `${clientName} submitted a new matter: "${title}".`,
+      type: 'vlo',
+      link: '/account/vlo',
+      audience: 'lawyer',
+    });
+  }
+
   const row = result.rows[0];
   return {
     id: `m-${row.id}`,
@@ -262,106 +309,361 @@ export async function createMatter(clientId, { title, description, files = [] })
   };
 }
 
-export async function getThreads(clientId) {
+async function userHasLawyerProfile(userId) {
+  const result = await query(
+    'SELECT id FROM lawyer_profiles WHERE user_id = $1 LIMIT 1',
+    [userId]
+  );
+  return Boolean(result.rows[0]);
+}
+
+async function userHasCaProfile(userId) {
+  const result = await query(
+    'SELECT id FROM ca_profiles WHERE user_id = $1 LIMIT 1',
+    [userId]
+  );
+  return Boolean(result.rows[0]);
+}
+
+function formatApptStatus(status) {
+  const map = {
+    pending: 'Pending',
+    confirmed: 'Accepted',
+    completed: 'Completed',
+    cancelled: 'Cancelled',
+  };
+  return map[status] || status;
+}
+
+function formatApptDate(dateValue) {
+  if (!dateValue) return '';
+  return new Date(dateValue).toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+}
+
+async function resolvePeerDisplay(peerUserId) {
+  const userResult = await query(
+    'SELECT id, username, role FROM users WHERE id = $1',
+    [peerUserId]
+  );
+  const user = userResult.rows[0];
+  if (!user) {
+    return {
+      peerId: peerUserId,
+      peerName: 'User',
+      peerImage: null,
+      peerRole: 'client',
+    };
+  }
+
+  const lawyer = await query(
+    'SELECT full_name, photo FROM lawyer_profiles WHERE user_id = $1',
+    [peerUserId]
+  );
+  if (lawyer.rows[0]) {
+    return {
+      peerId: peerUserId,
+      peerName: lawyer.rows[0].full_name || user.username,
+      peerImage: lawyer.rows[0].photo || 'https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&q=80&w=128',
+      peerRole: 'lawyer',
+    };
+  }
+
+  const ca = await query(
+    'SELECT full_name, photo FROM ca_profiles WHERE user_id = $1',
+    [peerUserId]
+  );
+  if (ca.rows[0]) {
+    return {
+      peerId: peerUserId,
+      peerName: ca.rows[0].full_name || user.username,
+      peerImage: ca.rows[0].photo || 'https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&q=80&w=128',
+      peerRole: 'ca',
+    };
+  }
+
+  const client = await query(
+    'SELECT profile_photo FROM client_profiles WHERE user_id = $1',
+    [peerUserId]
+  );
+
+  return {
+    peerId: peerUserId,
+    peerName: user.username,
+    peerImage: client.rows[0]?.profile_photo || 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&q=80&w=128',
+    peerRole: user.role || 'client',
+  };
+}
+
+function mapMessageSender(senderId, viewerUserId) {
+  return Number(senderId) === Number(viewerUserId) ? 'user' : 'peer';
+}
+
+async function loadThreadMessages(threadId, viewerUserId) {
+  const messages = await query(
+    `SELECT m.id, m.content AS text, m.file, m.created_at, m.sender_id, m.recipient_id,
+            m.is_read, su.role AS sender_role
+     FROM messages m
+     JOIN users su ON su.id = m.sender_id
+     WHERE m.thread_id = $1
+     ORDER BY m.created_at ASC`,
+    [threadId]
+  );
+
+  return messages.rows.map((m) => ({
+    id: m.id,
+    sender: mapMessageSender(m.sender_id, viewerUserId),
+    senderId: m.sender_id,
+    text: m.text,
+    timestamp: formatMessageTime(m.created_at),
+    createdAt: m.created_at,
+    isRead: m.is_read,
+    isMine: Number(m.sender_id) === Number(viewerUserId),
+    ...(m.file ? { attachments: [m.file] } : {}),
+  }));
+}
+
+async function buildThreadSummary(userId, threadId) {
+  const access = await assertThreadAccess(userId, threadId);
+  if (!access) return null;
+
+  const messages = await loadThreadMessages(threadId, userId);
+  if (!messages.length) return null;
+
+  const peer = await resolvePeerDisplay(access.peerUserId);
+  const last = messages[messages.length - 1];
+  const unread = await query(
+    `SELECT COUNT(*)::int AS count FROM messages
+     WHERE thread_id = $1 AND recipient_id = $2 AND is_read = FALSE`,
+    [threadId, userId]
+  );
+
+  return {
+    id: threadId,
+    peerId: peer.peerId,
+    peerName: peer.peerName,
+    peerRole: peer.peerRole,
+    peerImage: peer.peerImage,
+    lawyerName: peer.peerRole === 'lawyer' ? peer.peerName : undefined,
+    lawyerImage: peer.peerRole === 'lawyer' ? peer.peerImage : undefined,
+    clientName: peer.peerRole === 'client' ? peer.peerName : undefined,
+    clientImage: peer.peerRole === 'client' ? peer.peerImage : undefined,
+    lastMessage: last.text || 'File attachment',
+    lastUpdated: formatTimeAgo(last.createdAt || last.created_at),
+    unreadCount: unread.rows[0]?.count || 0,
+    messages,
+  };
+}
+
+export async function assertThreadAccess(userId, threadId) {
+  const result = await query(
+    `SELECT sender_id, recipient_id FROM messages
+     WHERE thread_id = $1
+       AND (sender_id = $2 OR recipient_id = $2)
+     LIMIT 1`,
+    [threadId, userId]
+  );
+
+  if (!result.rows[0]) return null;
+
+  const { sender_id, recipient_id } = result.rows[0];
+  const peerUserId = sender_id === userId ? recipient_id : sender_id;
+  return { peerUserId, senderId: sender_id, recipientId: recipient_id };
+}
+
+export async function getUnreadMessageCount(userId) {
+  const result = await query(
+    `SELECT COUNT(*)::int AS count FROM messages
+     WHERE recipient_id = $1 AND is_read = FALSE`,
+    [userId]
+  );
+  return result.rows[0]?.count || 0;
+}
+
+export async function getThreads(userId) {
   const threadIds = await query(
-    `SELECT DISTINCT thread_id FROM messages
+    `SELECT thread_id, MAX(created_at) AS last_at
+     FROM messages
      WHERE sender_id = $1 OR recipient_id = $1
-     ORDER BY thread_id`,
-    [clientId]
+     GROUP BY thread_id
+     ORDER BY last_at DESC`,
+    [userId]
   );
 
   const threads = [];
   for (const { thread_id } of threadIds.rows) {
-    const messages = await query(
-      `SELECT m.id, m.content AS text, m.file, m.created_at, m.sender_id,
-              su.role AS sender_role
-       FROM messages m
-       JOIN users su ON su.id = m.sender_id
-       WHERE m.thread_id = $1
-       ORDER BY m.created_at ASC`,
-      [thread_id]
-    );
-
-    if (!messages.rows.length) continue;
-
-    const lawyerMsg = messages.rows.find((m) => m.sender_role === 'lawyer');
-    const lawyerProfile = lawyerMsg
-      ? await query(
-          `SELECT lp.full_name, lp.photo FROM lawyer_profiles lp WHERE lp.user_id = $1`,
-          [lawyerMsg.sender_id]
-        )
-      : { rows: [] };
-
-    const last = messages.rows[messages.rows.length - 1];
-    threads.push({
-      id: thread_id,
-      lawyerName: lawyerProfile.rows[0]?.full_name || 'Assigned Advocate',
-      lawyerImage: lawyerProfile.rows[0]?.photo || 'https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&q=80&w=128',
-      lastMessage: last.text || 'File Attachment',
-      lastUpdated: formatTimeAgo(last.created_at),
-      messages: messages.rows.map((m) => ({
-        id: m.id,
-        sender: m.sender_id === clientId ? 'user' : 'lawyer',
-        text: m.text,
-        timestamp: formatMessageTime(m.created_at),
-        ...(m.file ? { attachments: [m.file] } : {})
-      }))
-    });
+    const summary = await buildThreadSummary(userId, thread_id);
+    if (summary) threads.push(summary);
   }
 
   return threads;
 }
 
-export async function sendMessage(clientId, threadId, { text, attachments = [] }) {
-  const threadMeta = await query(
-    `SELECT sender_id, recipient_id FROM messages WHERE thread_id = $1 LIMIT 1`,
-    [threadId]
-  );
-  if (!threadMeta.rows[0]) {
+export async function getThread(userId, threadId) {
+  const summary = await buildThreadSummary(userId, threadId);
+  if (!summary) {
+    throw new Error('Thread not found');
+  }
+  return summary;
+}
+
+export async function markThreadAsRead(userId, threadId) {
+  const access = await assertThreadAccess(userId, threadId);
+  if (!access) {
     throw new Error('Thread not found');
   }
 
-  const { sender_id, recipient_id } = threadMeta.rows[0];
-  const recipientId = sender_id === clientId ? recipient_id : sender_id;
+  const result = await query(
+    `UPDATE messages
+     SET is_read = TRUE
+     WHERE thread_id = $1 AND recipient_id = $2 AND is_read = FALSE
+     RETURNING id`,
+    [threadId, userId]
+  );
+
+  return { threadId, markedRead: result.rowCount };
+}
+
+export async function sendMessage(senderUserId, threadId, { text, attachments = [], recipientUserId = null, notify = true }) {
+  const access = await assertThreadAccess(senderUserId, threadId);
+  if (!access && !recipientUserId) {
+    throw new Error('Thread not found');
+  }
+
+  let recipientId = recipientUserId || access?.peerUserId;
+
+  if (!recipientId) {
+    const threadMeta = await query(
+      `SELECT sender_id, recipient_id FROM messages WHERE thread_id = $1 LIMIT 1`,
+      [threadId]
+    );
+    if (!threadMeta.rows[0]) {
+      throw new Error('Thread not found');
+    }
+    const { sender_id, recipient_id } = threadMeta.rows[0];
+    recipientId = sender_id === senderUserId ? recipient_id : sender_id;
+  }
+
+  const senderResult = await query(
+    'SELECT id, username, role FROM users WHERE id = $1',
+    [senderUserId]
+  );
+  const sender = senderResult.rows[0];
+  if (!sender) {
+    throw new Error('Sender not found');
+  }
 
   const result = await query(
     `INSERT INTO messages (sender_id, recipient_id, thread_id, content, file)
      VALUES ($1, $2, $3, $4, $5)
      RETURNING id, content, created_at`,
-    [clientId, recipientId, threadId, text || '', attachments[0] || null]
+    [senderUserId, recipientId, threadId, text || '', attachments[0] || null]
   );
 
-  await addActivity(clientId, 'message', 'Message', { id: threadId.replace('t-', '') });
+  if (sender.role === 'client') {
+    await addActivity(senderUserId, 'message', 'Message', { id: threadId.replace('t-', '') });
+  }
+
+  const senderName = await getUserDisplayName(senderUserId);
+  const isLawyerSender = await userHasLawyerProfile(senderUserId);
+  const isCaSender = await userHasCaProfile(senderUserId);
+  const isProfessionalSender = isLawyerSender || isCaSender;
+
+  if (notify) {
+    let title = 'New Message';
+    let audience = 'client';
+    if (isProfessionalSender) {
+      title = 'New Message from Your Advisor';
+      audience = 'client';
+    } else if (await userHasLawyerProfile(recipientId)) {
+      title = 'New Client Message';
+      audience = 'lawyer';
+    } else if (await userHasCaProfile(recipientId)) {
+      title = 'New Client Message';
+      audience = 'ca';
+    }
+
+    await createNotification(recipientId, {
+      title,
+      body: `${senderName} sent you a message: "${messagePreview(text)}"`,
+      type: 'message',
+      link: '/account/messages',
+      audience,
+    });
+  }
 
   const row = result.rows[0];
   return {
     id: row.id,
-    sender: 'user',
+    threadId,
+    sender: isProfessionalSender ? 'lawyer' : 'user',
+    senderId: senderUserId,
+    recipientId,
     text: text || '',
     attachments,
-    timestamp: formatMessageTime(row.created_at)
+    timestamp: formatMessageTime(row.created_at),
   };
 }
 
-export async function bookAppointment(clientId, { lawyerName, slot, mode }) {
-  const lawyer = await query(
-    `SELECT lp.id, lp.user_id FROM lawyer_profiles lp
-     WHERE lp.full_name ILIKE $1 OR lp.full_name ILIKE $2
-     LIMIT 1`,
-    [lawyerName, `%${lawyerName.replace(/^Adv\.\s*/i, '')}%`]
-  );
+function parseSlotTime(slot) {
+  if (!slot) return '10:00:00';
+  const match = String(slot).match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+  if (!match) return '10:00:00';
+  let hours = parseInt(match[1], 10);
+  const mins = match[2];
+  const meridiem = match[3]?.toUpperCase();
+  if (meridiem === 'PM' && hours < 12) hours += 12;
+  if (meridiem === 'AM' && hours === 12) hours = 0;
+  return `${String(hours).padStart(2, '0')}:${mins}:00`;
+}
 
-  if (!lawyer.rows[0]) {
+export async function bookAppointment(clientId, { lawyerName, lawyerProfileId, slot, mode, intake }) {
+  let lawyerRow = null;
+
+  if (lawyerProfileId) {
+    const byId = await query(
+      `SELECT lp.id, lp.user_id, lp.full_name
+       FROM lawyer_profiles lp
+       INNER JOIN users u ON u.id = lp.user_id AND u.is_active = TRUE
+       WHERE lp.id = $1 AND COALESCE(lp.is_suspended, FALSE) = FALSE`,
+      [Number(lawyerProfileId)]
+    );
+    lawyerRow = byId.rows[0] || null;
+  }
+
+  if (!lawyerRow && lawyerName) {
+    const byName = await query(
+      `SELECT lp.id, lp.user_id, lp.full_name
+       FROM lawyer_profiles lp
+       INNER JOIN users u ON u.id = lp.user_id AND u.is_active = TRUE
+       WHERE lp.full_name ILIKE $1 OR lp.full_name ILIKE $2
+       LIMIT 1`,
+      [lawyerName, `%${lawyerName.replace(/^Adv\.\s*/i, '')}%`]
+    );
+    lawyerRow = byName.rows[0] || null;
+  }
+
+  if (!lawyerRow) {
     throw new Error('Lawyer not found');
   }
 
-  const appointmentDate = slot?.split(' ')[0] || formatDate();
-  const appointmentTime = '10:00:00';
+  if (Number(clientId) === Number(lawyerRow.user_id)) {
+    throw new Error('You cannot book a consultation with yourself');
+  }
 
-  await query(
-    `INSERT INTO appointments (client_id, lawyer_prof_id, appointment_date, appointment_time, mode, status)
-     VALUES ($1, $2, $3, $4, $5, 'confirmed')`,
-    [clientId, lawyer.rows[0].id, appointmentDate, appointmentTime, mode || 'online']
+  const appointmentDate = formatDate();
+  const appointmentTime = parseSlotTime(slot);
+
+  const dbMode = mode === 'inperson' ? 'inperson' : 'online';
+  const clientNotes = intake?.trim() || null;
+  const insert = await query(
+    `INSERT INTO appointments (client_id, lawyer_prof_id, appointment_date, appointment_time, mode, status, client_notes)
+     VALUES ($1, $2, $3, $4, $5, 'pending', $6)
+     RETURNING id, appointment_date, appointment_time, mode, status`,
+    [clientId, lawyerRow.id, appointmentDate, appointmentTime, dbMode, clientNotes]
   );
 
   await query(
@@ -370,8 +672,171 @@ export async function bookAppointment(clientId, { lawyerName, slot, mode }) {
     [clientId]
   );
 
-  await addActivity(clientId, 'booking', 'Booked', { name: lawyerName });
-  return { success: true, lawyerName, slot, mode };
+  await addActivity(clientId, 'booking', 'Booked', { name: lawyerRow.full_name });
+
+  const clientName = await getUserDisplayName(clientId);
+  const slotLabel = slot || `${appointmentDate} at ${appointmentTime.slice(0, 5)}`;
+  const modeLabel = dbMode === 'online' ? 'online' : 'in-person';
+  const intakeNote = intake?.trim() ? ` Note: "${messagePreview(intake, 80)}"` : '';
+
+  await createNotification(clientId, {
+    title: 'Consultation Booked',
+    body: `Your ${modeLabel} consultation with ${lawyerRow.full_name} is requested for ${slotLabel}.`,
+    type: 'appointment',
+    link: '/account/appointments',
+    audience: 'client',
+  });
+
+  await createNotification(lawyerRow.user_id, {
+    title: 'New Consultation Request',
+    body: `${clientName} requested a ${modeLabel} consultation for ${slotLabel}.${intakeNote}`,
+    type: 'appointment',
+    link: '/account/appointments',
+    audience: 'lawyer',
+  });
+
+  const row = insert.rows[0];
+  return {
+    success: true,
+    appointmentId: row.id,
+    lawyerName: lawyerRow.full_name,
+    lawyerProfileId: lawyerRow.id,
+    slot: slotLabel,
+    mode: dbMode,
+    status: row.status,
+    date: row.appointment_date,
+    time: row.appointment_time
+  };
+}
+
+export async function bookCaAppointment(clientId, { caProfileId, caName, slot, mode, intake, clientCity }) {
+  let caRow = null;
+
+  if (caProfileId) {
+    const byId = await query(
+      `SELECT cp.id, cp.user_id, cp.full_name
+       FROM ca_profiles cp
+       INNER JOIN users u ON u.id = cp.user_id AND u.is_active = TRUE
+       WHERE cp.id = $1 AND COALESCE(cp.is_suspended, FALSE) = FALSE`,
+      [Number(caProfileId)]
+    );
+    caRow = byId.rows[0] || null;
+  }
+
+  if (!caRow && caName) {
+    const byName = await query(
+      `SELECT cp.id, cp.user_id, cp.full_name
+       FROM ca_profiles cp
+       INNER JOIN users u ON u.id = cp.user_id AND u.is_active = TRUE
+       WHERE cp.full_name ILIKE $1
+       LIMIT 1`,
+      [`%${caName}%`]
+    );
+    caRow = byName.rows[0] || null;
+  }
+
+  if (!caRow) {
+    throw new Error('Chartered accountant not found');
+  }
+
+  if (Number(clientId) === Number(caRow.user_id)) {
+    throw new Error('You cannot book a consultation with yourself');
+  }
+
+  const appointmentDate = formatDate();
+  const appointmentTime = parseSlotTime(slot);
+  const dbMode = mode === 'inperson' ? 'inperson' : 'online';
+  const topicParts = [];
+  if (clientCity?.trim()) topicParts.push(`City: ${clientCity.trim()}`);
+  if (intake?.trim()) topicParts.push(intake.trim());
+  const topic = topicParts.join('\n\n') || null;
+
+  const insert = await query(
+    `INSERT INTO ca_appointments (client_id, ca_prof_id, appointment_date, appointment_time, mode, status, topic)
+     VALUES ($1, $2, $3, $4, $5, 'pending', $6)
+     RETURNING id, appointment_date, appointment_time, mode, status`,
+    [clientId, caRow.id, appointmentDate, appointmentTime, dbMode, topic]
+  );
+
+  await addActivity(clientId, 'booking', 'Booked', { name: caRow.full_name });
+
+  const clientName = await getUserDisplayName(clientId);
+  const slotLabel = slot || `${appointmentDate} at ${appointmentTime.slice(0, 5)}`;
+  const modeLabel = dbMode === 'online' ? 'online' : 'in-person';
+  const intakeNote = intake?.trim() ? ` Note: "${messagePreview(intake, 80)}"` : '';
+
+  await createNotification(clientId, {
+    title: 'Consultation Booked',
+    body: `Your ${modeLabel} consultation with ${caRow.full_name} is requested for ${slotLabel}.`,
+    type: 'appointment',
+    link: '/account/appointments',
+    audience: 'client',
+  });
+
+  await createNotification(caRow.user_id, {
+    title: 'New Consultation Request',
+    body: `${clientName} requested a ${modeLabel} consultation for ${slotLabel}.${intakeNote}`,
+    type: 'appointment',
+    link: '/account/appointments',
+    audience: 'ca',
+  });
+
+  const row = insert.rows[0];
+  return {
+    success: true,
+    appointmentId: row.id,
+    professionalName: caRow.full_name,
+    caProfileId: caRow.id,
+    professionalRole: 'CA',
+    slot: slotLabel,
+    mode: dbMode,
+    status: row.status,
+    date: row.appointment_date,
+    time: row.appointment_time,
+  };
+}
+
+export async function getClientAppointments(clientId) {
+  const [lawyerRows, caRows] = await Promise.all([
+    query(
+      `SELECT a.id, a.appointment_date, a.appointment_time, a.mode, a.status, a.client_notes AS notes,
+              lp.full_name AS professional_name, lp.id AS professional_profile_id, 'Lawyer' AS professional_role
+       FROM appointments a
+       JOIN lawyer_profiles lp ON lp.id = a.lawyer_prof_id
+       WHERE a.client_id = $1
+       ORDER BY a.appointment_date DESC, a.appointment_time DESC`,
+      [clientId]
+    ),
+    query(
+      `SELECT a.id, a.appointment_date, a.appointment_time, a.mode, a.status, a.topic AS notes,
+              cp.full_name AS professional_name, cp.id AS professional_profile_id, 'CA' AS professional_role
+       FROM ca_appointments a
+       JOIN ca_profiles cp ON cp.id = a.ca_prof_id
+       WHERE a.client_id = $1
+       ORDER BY a.appointment_date DESC, a.appointment_time DESC`,
+      [clientId]
+    ),
+  ]);
+
+  const mapRow = (row) => ({
+    id: row.id,
+    professionalName: row.professional_name,
+    professionalRole: row.professional_role,
+    professionalProfileId: row.professional_profile_id,
+    date: formatApptDate(row.appointment_date),
+    time: row.appointment_time?.slice?.(0, 5) || row.appointment_time,
+    mode: row.mode === 'online' ? 'Online' : 'In-Person',
+    status: formatApptStatus(row.status),
+    caseDescription: row.notes || '',
+    clientCity: (row.notes || '').match(/^City:\s*(.+)$/m)?.[1]?.trim() || '',
+  });
+
+  return {
+    appointments: [
+      ...lawyerRows.rows.map(mapRow),
+      ...caRows.rows.map(mapRow),
+    ].sort((a, b) => `${b.date}${b.time}`.localeCompare(`${a.date}${a.time}`)),
+  };
 }
 
 export async function getSubscription(clientId) {
@@ -399,6 +864,14 @@ export async function cancelSubscription(clientId) {
     [clientId]
   );
   await addActivity(clientId, 'billing', 'Cancelled', {});
+
+  await createNotification(clientId, {
+    title: 'Subscription Cancelled',
+    body: 'Your VLO retainer subscription has been cancelled. You can re-subscribe anytime from the subscriptions page.',
+    type: 'billing',
+    link: '/account/subscriptions',
+    audience: 'client',
+  });
 }
 
 export async function getInvoices(clientId) {
@@ -432,6 +905,15 @@ export async function submitEvaluation(clientId, { rating, comment, threadId }) 
        VALUES ($1, $2, $3, $4, FALSE)`,
       [lawyer.rows[0].id, clientId, rating, comment || '']
     );
+
+    const clientName = await getUserDisplayName(clientId);
+    await createNotification(lawyerUserId, {
+      title: 'New Client Review',
+      body: `${clientName} submitted a ${rating}-star review for your services.`,
+      type: 'review',
+      link: '/account/profile',
+      audience: 'lawyer',
+    });
   }
 
   return { success: true, rating, comment, threadId };
@@ -439,14 +921,23 @@ export async function submitEvaluation(clientId, { rating, comment, threadId }) 
 
 export async function getLawyers(filters = {}) {
   let sql = `
-    SELECT lp.id, lp.full_name AS name, lp.city, lp.practice_area AS "practiceArea",
-           lp.language, lp.full_bio AS bio, lp.online_fee, lp.inperson_fee, lp.photo AS image,
+    SELECT lp.id, lp.user_id, lp.full_name AS name, lp.city, lp.practice_area AS "practiceArea",
+           lp.language, lp.languages, lp.practice_areas AS "practiceAreas",
+           COALESCE(NULLIF(lp.full_bio, ''), lp.short_bio, '') AS bio,
+           lp.online_fee, lp.inperson_fee, lp.verification_stat,
+           COALESCE(NULLIF(lp.photo, ''), lp.documents->>'profilePhoto', '') AS image,
            COALESCE(AVG(lr.rating), 5)::numeric(3,1) AS stars
     FROM lawyer_profiles lp
-    INNER JOIN users u ON u.id = lp.user_id AND u.role = 'lawyer' AND u.is_active = TRUE
+    INNER JOIN users u ON u.id = lp.user_id AND u.is_active = TRUE
     LEFT JOIN lawyer_reviews lr ON lr.lawyer_id = lp.id AND lr.is_approved = TRUE
-    WHERE lp.verification_stat = 'verified' AND lp.is_suspended = FALSE`;
+    WHERE COALESCE(lp.is_suspended, FALSE) = FALSE`;
   const params = [];
+
+  if (filters.verifiedOnly) {
+    sql += ` AND lp.verification_stat = 'verified'`;
+  } else {
+    sql += ` AND COALESCE(lp.verification_stat, 'pending') IN ('verified', 'pending')`;
+  }
 
   if (filters.city) {
     params.push(filters.city);
@@ -454,27 +945,83 @@ export async function getLawyers(filters = {}) {
   }
   if (filters.practice) {
     params.push(`%${filters.practice}%`);
-    sql += ` AND LOWER(lp.practice_area) LIKE LOWER($${params.length})`;
+    sql += ` AND (
+      LOWER(COALESCE(lp.practice_area, '')) LIKE LOWER($${params.length})
+      OR LOWER(COALESCE(lp.practice_areas, '')) LIKE LOWER($${params.length})
+    )`;
   }
   if (filters.lang) {
     params.push(filters.lang);
-    sql += ` AND LOWER(lp.language) = LOWER($${params.length})`;
+    sql += ` AND (
+      LOWER(COALESCE(lp.language, '')) = LOWER($${params.length})
+      OR LOWER(COALESCE(lp.languages, '')) LIKE LOWER('%' || $${params.length} || '%')
+    )`;
   }
 
-  sql += ' GROUP BY lp.id ORDER BY lp.membership_tier DESC, lp.id';
+  sql += ' GROUP BY lp.id ORDER BY lp.membership_tier DESC NULLS LAST, lp.id';
 
   const result = await query(sql, params);
   return result.rows.map((row) => ({
     id: String(row.id),
     name: row.name,
-    city: row.city,
+    city: row.city || 'Pakistan',
     practiceArea: row.practiceArea || 'General practice',
-    language: row.language || 'English',
+    practiceAreas: row.practiceAreas || '',
+    language: row.language || row.languages?.split?.(',')?.[0]?.trim() || 'English',
+    languages: row.languages || row.language || 'English',
     stars: Number(row.stars),
     bio: row.bio || '',
     onlineFee: formatPrice(row.online_fee),
     inPersonFee: formatPrice(row.inperson_fee),
-    image: row.image || 'https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&q=80&w=256'
+    image: row.image || 'https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&q=80&w=256',
+    verificationStatus: row.verification_stat === 'verified' ? 'Verified' : 'Pending',
+    availableSlots: ['10:00 AM', '11:30 AM', '2:00 PM', '4:00 PM'],
+  }));
+}
+
+export async function getCas(filters = {}) {
+  let sql = `
+    SELECT cp.id, cp.user_id, cp.full_name AS name, cp.city, cp.qualification,
+           cp.service_areas AS "serviceAreas",
+           COALESCE(NULLIF(cp.full_bio, ''), cp.short_bio, '') AS bio,
+           cp.online_fee, cp.inperson_fee, cp.fees, cp.verification_stat,
+           COALESCE(NULLIF(cp.photo, ''), cp.documents->>'profilePhoto', '') AS image
+    FROM ca_profiles cp
+    INNER JOIN users u ON u.id = cp.user_id AND u.is_active = TRUE
+    WHERE COALESCE(cp.is_suspended, FALSE) = FALSE`;
+  const params = [];
+
+  if (filters.verifiedOnly) {
+    sql += ` AND cp.verification_stat = 'verified'`;
+  } else {
+    sql += ` AND COALESCE(cp.verification_stat, 'pending') IN ('verified', 'pending')`;
+  }
+
+  if (filters.city) {
+    params.push(filters.city);
+    sql += ` AND LOWER(cp.city) = LOWER($${params.length})`;
+  }
+  if (filters.practice) {
+    params.push(`%${filters.practice}%`);
+    sql += ` AND LOWER(COALESCE(cp.service_areas, '')) LIKE LOWER($${params.length})`;
+  }
+
+  sql += ' ORDER BY cp.membership_tier DESC NULLS LAST, cp.id';
+
+  const result = await query(sql, params);
+  return result.rows.map((row) => ({
+    id: String(row.id),
+    userId: String(row.user_id),
+    name: row.name,
+    city: row.city || 'Pakistan',
+    qualification: row.qualification || 'Chartered Accountant',
+    serviceAreas: row.serviceAreas || '',
+    bio: row.bio || '',
+    onlineFee: formatPrice(row.online_fee || row.fees),
+    inPersonFee: formatPrice(row.inperson_fee),
+    image: row.image || 'https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&q=80&w=256',
+    verificationStatus: row.verification_stat === 'verified' ? 'Verified' : 'Pending',
+    role: 'CA',
   }));
 }
 
@@ -497,4 +1044,109 @@ export async function getWorkspace(clientId) {
 
 function formatDate() {
   return new Date().toISOString().split('T')[0];
+}
+
+async function getUserDisplayName(userId) {
+  const result = await query(
+    'SELECT username FROM users WHERE id = $1',
+    [userId]
+  );
+  return result.rows[0]?.username || 'Client';
+}
+
+export async function createNotification(userId, { title, body, type = 'general', link = '/account', audience = 'client' }) {
+  if (!userId || !body?.trim()) return null;
+
+  const result = await query(
+    `INSERT INTO notifications (user_id, title, body, notification_type, link, audience)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING id, body AS text, link AS route, audience`,
+    [userId, title || 'NexusLexis Update', body.trim(), type, link, audience]
+  );
+  return result.rows[0] || null;
+}
+
+function messagePreview(text, maxLen = 100) {
+  const trimmed = (text || '').trim();
+  if (!trimmed) return 'Sent an attachment';
+  return trimmed.length > maxLen ? `${trimmed.slice(0, maxLen)}…` : trimmed;
+}
+
+async function findThreadBetween(userIdA, userIdB) {
+  const result = await query(
+    `SELECT thread_id FROM messages
+     WHERE (sender_id = $1 AND recipient_id = $2)
+        OR (sender_id = $2 AND recipient_id = $1)
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [userIdA, userIdB]
+  );
+  return result.rows[0]?.thread_id || null;
+}
+
+export async function startMessageThread(clientId, { lawyerProfileId, lawyerUserId, text, attachments = [] }) {
+  let recipientUserId = lawyerUserId;
+
+  if (lawyerProfileId) {
+    const lawyer = await query(
+      'SELECT user_id, full_name FROM lawyer_profiles WHERE id = $1',
+      [lawyerProfileId]
+    );
+    if (!lawyer.rows[0]) throw new Error('Lawyer not found');
+    recipientUserId = lawyer.rows[0].user_id;
+  }
+
+  if (!recipientUserId) {
+    throw new Error('lawyerProfileId or lawyerUserId is required');
+  }
+
+  if (Number(recipientUserId) === Number(clientId)) {
+    throw new Error('Cannot start a conversation with yourself');
+  }
+
+  const recipient = await query(
+    'SELECT id FROM users WHERE id = $1 AND is_active = TRUE',
+    [recipientUserId]
+  );
+  if (!recipient.rows[0] || !(await userHasLawyerProfile(recipientUserId))) {
+    throw new Error('Lawyer not found');
+  }
+
+  if (!text?.trim() && attachments.length === 0) {
+    throw new Error('Message text or attachments required');
+  }
+
+  const existingThreadId = await findThreadBetween(clientId, recipientUserId);
+  const threadId = existingThreadId || `t-${clientId}-${recipientUserId}-${Date.now()}`;
+
+  const message = await sendMessage(clientId, threadId, { text, attachments, recipientUserId });
+  return { ...message, threadId, created: !existingThreadId };
+}
+
+export async function sendLawyerToClientMessage(lawyerUserId, clientUserId, text) {
+  return sendProfessionalToClientMessage(lawyerUserId, clientUserId, text);
+}
+
+export async function sendProfessionalToClientMessage(professionalUserId, clientUserId, text) {
+  if (!professionalUserId || !clientUserId || !text?.trim()) {
+    throw new Error('Professional, client, and message text are required');
+  }
+  if (Number(professionalUserId) === Number(clientUserId)) {
+    throw new Error('Cannot message yourself');
+  }
+
+  const isLawyer = await userHasLawyerProfile(professionalUserId);
+  const isCa = await userHasCaProfile(professionalUserId);
+  if (!isLawyer && !isCa) {
+    throw new Error('Professional not found');
+  }
+
+  const existingThreadId = await findThreadBetween(professionalUserId, clientUserId);
+  const threadId = existingThreadId || `t-${clientUserId}-${professionalUserId}-${Date.now()}`;
+
+  return sendMessage(professionalUserId, threadId, {
+    text: text.trim(),
+    recipientUserId: clientUserId,
+    notify: true,
+  });
 }

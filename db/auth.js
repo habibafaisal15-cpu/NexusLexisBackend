@@ -1,6 +1,7 @@
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { query } from './index.js';
+import { validateEmailForSignup } from '../../shared/validation/email.js';
 
 export async function findUserByEmail(email) {
   const result = await query(
@@ -59,8 +60,8 @@ async function upgradePasswordIfNeeded(userId, password, storedHash) {
 
 export async function initializeClientWorkspace(userId, displayName) {
   await query(
-    `INSERT INTO notifications (user_id, title, body, notification_type, link)
-     VALUES ($1, 'Welcome to NexusLexis', $2, 'welcome', '/account')`,
+    `INSERT INTO notifications (user_id, title, body, notification_type, link, audience)
+     VALUES ($1, 'Welcome to NexusLexis', $2, 'welcome', '/account', 'client')`,
     [userId, `Your corporate workspace is ready, ${displayName}. Explore lawyers, document services, and your retainer hub.`]
   );
 
@@ -72,7 +73,12 @@ export async function initializeClientWorkspace(userId, displayName) {
 }
 
 export async function registerUser({ name, email, password, role = 'client' }) {
-  const normalizedEmail = email.toLowerCase().trim();
+  const emailCheck = await validateEmailForSignup(email);
+  if (!emailCheck.valid) {
+    throw new Error(emailCheck.error);
+  }
+
+  const normalizedEmail = emailCheck.email;
   const username = name.trim();
 
   const existing = await findUserByEmail(normalizedEmail);

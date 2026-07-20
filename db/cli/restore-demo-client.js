@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import bcrypt from 'bcryptjs';
-import { query, pool } from './index.js';
+import { query, pool } from '../index.js';
 
 const clientEmail = process.env.DEMO_CLIENT_EMAIL || 'habibcorp@nexuslexis.law';
 const password = 'Client@123';

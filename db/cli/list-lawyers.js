@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { query, pool } from './index.js';
+import { query, pool } from '../index.js';
 
 const rows = await query(`
   SELECT lp.id, lp.full_name, lp.city, u.email, u.role
