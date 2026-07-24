@@ -202,6 +202,82 @@ app.delete('/api/v2/notifications', authMiddleware, asyncHandler(async (req, res
   res.json({ success: true });
 }));
 
+// ─── Document Library (catalog) ───────────────────────────────────────────────
+
+app.get('/api/v2/library/catalog', asyncHandler(async (req, res) => {
+  const { category, search } = req.query;
+  res.json(await repo.getLibraryCatalog({ category, search }));
+}));
+
+app.get('/api/v2/library/templates/:slug', asyncHandler(async (req, res) => {
+  const template = await repo.getLibraryTemplate(req.params.slug);
+  if (!template) {
+    return res.status(404).json({ error: 'Template not found' });
+  }
+  res.json(template);
+}));
+
+// ─── Client Documents ───────────────────────────────────────────────────────
+
+app.get('/api/v2/documents', authMiddleware, asyncHandler(async (req, res) => {
+  const clientId = await getClientId(req, res);
+  if (!clientId) return;
+  const { status } = req.query;
+  res.json(await repo.getClientDocuments(clientId, { status }));
+}));
+
+app.get('/api/v2/documents/:orderNumber', authMiddleware, asyncHandler(async (req, res) => {
+  const clientId = await getClientId(req, res);
+  if (!clientId) return;
+
+  const document = await repo.getClientDocumentOrder(clientId, req.params.orderNumber);
+  if (!document) {
+    return res.status(404).json({ error: 'Document not found' });
+  }
+  res.json(document);
+}));
+
+app.get('/api/v2/documents/:orderNumber/download', authMiddleware, asyncHandler(async (req, res) => {
+  const clientId = await getClientId(req, res);
+  if (!clientId) return;
+
+  const document = await repo.getClientDocumentOrder(clientId, req.params.orderNumber);
+  if (!document) {
+    return res.status(404).json({ error: 'Document not found' });
+  }
+
+  if (document.completedFile) {
+    const filePath = join(UPLOADS_DIR, document.completedFile);
+    if (existsSync(filePath)) {
+      return res.download(filePath, document.completedFile);
+    }
+  }
+
+  if (document.statusKey !== 'completed' && document.status !== 'Completed') {
+    return res.status(409).json({ error: 'Document is not ready for download yet' });
+  }
+
+  const filename = `${document.templateName.replace(/[^a-z0-9]/gi, '_')}_${document.orderNumber}.txt`;
+  const content = [
+    'NEXUSLEXIS DOCUMENT DELIVERY',
+    '============================',
+    '',
+    `Order: ${document.orderNumber}`,
+    `Template: ${document.templateName}`,
+    `Status: ${document.status}`,
+    `Expected delivery: ${document.date}`,
+    '',
+    'INTAKE SUMMARY',
+    JSON.stringify(document.formData || {}, null, 2),
+    '',
+    '--- End of Document ---',
+  ].join('\n');
+
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(content);
+}));
+
 // ─── Orders ─────────────────────────────────────────────────────────────────
 
 app.get('/api/v2/orders', authMiddleware, asyncHandler(async (req, res) => {

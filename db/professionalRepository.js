@@ -49,6 +49,24 @@ function apptStatusToDb(status) {
   return map[status] || status?.toLowerCase();
 }
 
+function formatAppointmentSlot(appointmentDate, appointmentTime) {
+  const date = new Date(appointmentDate);
+  const dayLabel = Number.isNaN(date.getTime())
+    ? String(appointmentDate)
+    : date.toLocaleDateString('en-PK', {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric',
+      });
+  const timeLabel = String(appointmentTime || '').slice(0, 5);
+  return { dayLabel, timeLabel, slotLabel: `${dayLabel} at ${timeLabel}` };
+}
+
+function buildAppointmentConfirmationMessage(dayLabel, timeLabel) {
+  return `Your appointment for ${dayLabel} at ${timeLabel} is confirmed. You can talk further here.`;
+}
+
 export async function getUserById(userId) {
   const result = await query(
     'SELECT id, username, email, role, phone FROM users WHERE id = $1 AND is_active = TRUE',
@@ -261,16 +279,20 @@ export async function updateLawyerAppointment(userId, appointmentId, status) {
   );
 
   const statusLabel = apptStatusLabel(dbStatus);
-  const slotLabel = `${appt.rows[0].appointment_date} at ${String(appt.rows[0].appointment_time).slice(0, 5)}`;
+  const { dayLabel, timeLabel, slotLabel } = formatAppointmentSlot(
+    appt.rows[0].appointment_date,
+    appt.rows[0].appointment_time
+  );
   const modeLabel = appt.rows[0].mode === 'online' ? 'online' : 'in-person';
   const lawyerName = appt.rows[0].lawyer_name || 'Your lawyer';
 
   let title = 'Appointment Update';
   let body = `Your consultation on ${slotLabel} is now ${statusLabel}.`;
+  let messageLink = '/account/messages';
 
   if (status === 'Accepted' || dbStatus === 'confirmed') {
-    title = 'Consultation Accepted';
-    body = `${lawyerName} accepted your ${modeLabel} consultation for ${slotLabel}.`;
+    title = 'Appointment Confirmed';
+    body = `${lawyerName} confirmed your ${modeLabel} appointment for ${dayLabel} at ${timeLabel}. Open Messages to talk further.`;
   } else if (status === 'Declined' || (dbStatus === 'cancelled' && status === 'Declined')) {
     title = 'Consultation Declined';
     body = `${lawyerName} declined your ${modeLabel} consultation for ${slotLabel}.`;
@@ -279,27 +301,28 @@ export async function updateLawyerAppointment(userId, appointmentId, status) {
     body = `${lawyerName} cancelled your ${modeLabel} consultation for ${slotLabel}.`;
   }
 
-  await createNotification(appt.rows[0].client_id, {
-    title,
-    body,
-    type: 'appointment',
-    link: '/account/messages',
-    audience: 'client',
-  });
-
   if (status === 'Accepted' || dbStatus === 'confirmed') {
     const clientId = appt.rows[0].client_id;
     if (Number(userId) !== Number(clientId)) {
-      const confirmationText =
-        `Your ${modeLabel} consultation on ${slotLabel} is confirmed. ` +
-        'Reply here if you have any questions before we meet.';
+      const confirmationText = buildAppointmentConfirmationMessage(dayLabel, timeLabel);
       try {
-        await sendProfessionalToClientMessage(userId, clientId, confirmationText);
+        const sent = await sendProfessionalToClientMessage(userId, clientId, confirmationText);
+        if (sent?.threadId) {
+          messageLink = `/account/messages?thread=${encodeURIComponent(sent.threadId)}`;
+        }
       } catch (err) {
         console.error('[appointments] confirmation message failed:', err.message);
       }
     }
   }
+
+  await createNotification(appt.rows[0].client_id, {
+    title,
+    body,
+    type: 'appointment',
+    link: messageLink,
+    audience: 'client',
+  });
 
   return { success: true, status: statusLabel };
 }
@@ -962,16 +985,20 @@ export async function updateCaAppointment(userId, appointmentId, { status, meeti
 
   if (status) {
     const statusLabel = apptStatusLabel(dbStatus);
-    const slotLabel = `${appt.rows[0].appointment_date} at ${String(appt.rows[0].appointment_time).slice(0, 5)}`;
+    const { dayLabel, timeLabel, slotLabel } = formatAppointmentSlot(
+      appt.rows[0].appointment_date,
+      appt.rows[0].appointment_time
+    );
     const modeLabel = appt.rows[0].mode === 'online' ? 'online' : 'in-person';
     const caName = appt.rows[0].ca_name || 'Your chartered accountant';
 
     let title = 'Appointment Update';
     let body = `Your consultation on ${slotLabel} is now ${statusLabel}.`;
+    let messageLink = '/account/messages';
 
     if (status === 'Accepted' || dbStatus === 'confirmed') {
-      title = 'Consultation Accepted';
-      body = `${caName} accepted your ${modeLabel} consultation for ${slotLabel}.`;
+      title = 'Appointment Confirmed';
+      body = `${caName} confirmed your ${modeLabel} appointment for ${dayLabel} at ${timeLabel}. Open Messages to talk further.`;
     } else if (status === 'Declined' || (dbStatus === 'cancelled' && status === 'Declined')) {
       title = 'Consultation Declined';
       body = `${caName} declined your ${modeLabel} consultation for ${slotLabel}.`;
@@ -980,27 +1007,28 @@ export async function updateCaAppointment(userId, appointmentId, { status, meeti
       body = `${caName} cancelled your ${modeLabel} consultation for ${slotLabel}.`;
     }
 
-    await createNotification(appt.rows[0].client_id, {
-      title,
-      body,
-      type: 'appointment',
-      link: '/account/messages',
-      audience: 'client',
-    });
-
     if (status === 'Accepted' || dbStatus === 'confirmed') {
       const clientId = appt.rows[0].client_id;
       if (Number(userId) !== Number(clientId)) {
-        const confirmationText =
-          `Your ${modeLabel} consultation on ${slotLabel} is confirmed. ` +
-          'Reply here if you have any questions before we meet.';
+        const confirmationText = buildAppointmentConfirmationMessage(dayLabel, timeLabel);
         try {
-          await sendProfessionalToClientMessage(userId, clientId, confirmationText);
+          const sent = await sendProfessionalToClientMessage(userId, clientId, confirmationText);
+          if (sent?.threadId) {
+            messageLink = `/account/messages?thread=${encodeURIComponent(sent.threadId)}`;
+          }
         } catch (err) {
           console.error('[appointments] CA confirmation message failed:', err.message);
         }
       }
     }
+
+    await createNotification(appt.rows[0].client_id, {
+      title,
+      body,
+      type: 'appointment',
+      link: messageLink,
+      audience: 'client',
+    });
   }
 
   return { success: true, appointmentId: Number(appointmentId), status, meetingLink };

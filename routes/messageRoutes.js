@@ -20,6 +20,10 @@ function isCa(req) {
   return req.user?.role === 'ca' || req.user?.roles?.includes('CharteredAccountant');
 }
 
+function isLawyer(req) {
+  return req.user?.role === 'lawyer' || req.user?.roles?.includes('LegalAdvocate');
+}
+
 function handleMessageError(err, res) {
   const message = err.message || 'Message request failed';
   if (message === 'Thread not found' || message === 'Lawyer not found') {

@@ -144,24 +144,187 @@ export async function getActivities(clientId) {
   }));
 }
 
+function mapOrderRow(row) {
+  return {
+    id: row.order_number || String(row.id),
+    orderNumber: row.order_number || String(row.id),
+    templateId: row.templateId,
+    templateName: row.templateName,
+    categorySlug: row.categorySlug || null,
+    categoryName: row.categoryName || null,
+    status: ORDER_STATUS_MAP[row.status] || row.status,
+    statusKey: row.status,
+    date: row.expected_delivery ? new Date(row.expected_delivery).toISOString().split('T')[0] : formatDate(),
+    expectedDelivery: row.expected_delivery,
+    milestone: row.milestone || null,
+    completedFile: row.completed_file || null,
+    downloadUrl: row.completed_file ? `/api/v2/documents/${row.order_number}/download` : null,
+    formData: row.formData || {},
+  };
+}
+
 export async function getOrders(clientId) {
   const result = await query(
-    `SELECT so.id, so.order_number, s.slug AS "templateId", s.name AS "templateName",
-            so.status, so.intake_form_data AS "formData", so.expected_delivery
+    `SELECT so.id, so.order_number, so.status, so.intake_form_data AS "formData",
+            so.expected_delivery, so.completed_file, so.milestone,
+            s.slug AS "templateId", s.name AS "templateName",
+            sc.slug AS "categorySlug", sc.name AS "categoryName"
      FROM service_orders so
      JOIN services s ON s.id = so.service_id
+     LEFT JOIN service_categories sc ON sc.id = s.category_id
      WHERE so.client_id = $1
      ORDER BY so.id DESC`,
     [clientId]
   );
-  return result.rows.map((row) => ({
-    id: row.order_number || String(row.id),
-    templateId: row.templateId,
-    templateName: row.templateName,
-    status: ORDER_STATUS_MAP[row.status] || row.status,
-    date: row.expected_delivery ? new Date(row.expected_delivery).toISOString().split('T')[0] : formatDate(),
-    formData: row.formData || {}
+  return result.rows.map(mapOrderRow);
+}
+
+export async function getLibraryCatalog({ category, search } = {}) {
+  let sql = `
+    SELECT sc.id AS category_id, sc.name AS category_name, sc.slug AS category_slug,
+           sc.description AS category_description, sc.icon AS category_icon,
+           sc.display_order,
+           s.id AS service_id, s.name, s.slug, s.price, s.delivery_days, s.intake_schema
+    FROM service_categories sc
+    LEFT JOIN services s ON s.category_id = sc.id
+    WHERE 1=1`;
+  const params = [];
+
+  if (category) {
+    params.push(category);
+    sql += ` AND sc.slug = $${params.length}`;
+  }
+
+  if (search) {
+    params.push(`%${search.toLowerCase()}%`);
+    sql += ` AND (
+      LOWER(s.name) LIKE $${params.length}
+      OR LOWER(COALESCE(s.slug, '')) LIKE $${params.length}
+      OR LOWER(sc.name) LIKE $${params.length}
+    )`;
+  }
+
+  sql += ' ORDER BY sc.display_order ASC, sc.name ASC, s.name ASC';
+
+  const result = await query(sql, params);
+  const categoriesMap = new Map();
+
+  for (const row of result.rows) {
+    if (!categoriesMap.has(row.category_slug)) {
+      categoriesMap.set(row.category_slug, {
+        id: row.category_id,
+        name: row.category_name,
+        slug: row.category_slug,
+        description: row.category_description,
+        icon: row.category_icon,
+        displayOrder: row.display_order,
+        templates: [],
+      });
+    }
+
+    if (row.service_id) {
+      categoriesMap.get(row.category_slug).templates.push({
+        id: row.service_id,
+        name: row.name,
+        slug: row.slug,
+        description: row.intake_schema?.category || row.category_description || '',
+        price: Number(row.price),
+        priceLabel: formatPrice(row.price),
+        deliveryDays: row.delivery_days,
+        intakeSchema: row.intake_schema || {},
+      });
+    }
+  }
+
+  return {
+    categories: [...categoriesMap.values()],
+    templateCount: [...categoriesMap.values()].reduce((sum, cat) => sum + cat.templates.length, 0),
+  };
+}
+
+export async function getLibraryTemplate(slug) {
+  const result = await query(
+    `SELECT s.id, s.name, s.slug, s.price, s.delivery_days, s.intake_schema,
+            sc.id AS category_id, sc.name AS category_name, sc.slug AS category_slug,
+            sc.description AS category_description, sc.icon AS category_icon
+     FROM services s
+     JOIN service_categories sc ON sc.id = s.category_id
+     WHERE s.slug = $1`,
+    [slug]
+  );
+
+  const row = result.rows[0];
+  if (!row) return null;
+
+  return {
+    id: row.id,
+    name: row.name,
+    slug: row.slug,
+    description: row.category_description,
+    price: Number(row.price),
+    priceLabel: formatPrice(row.price),
+    deliveryDays: row.delivery_days,
+    intakeSchema: row.intake_schema || {},
+    category: {
+      id: row.category_id,
+      name: row.category_name,
+      slug: row.category_slug,
+      icon: row.category_icon,
+    },
+  };
+}
+
+export async function getClientDocuments(clientId, { status } = {}) {
+  let sql = `
+    SELECT so.id, so.order_number, so.status, so.intake_form_data AS "formData",
+           so.expected_delivery, so.completed_file, so.milestone, so.created_at,
+           s.slug AS "templateId", s.name AS "templateName",
+           sc.slug AS "categorySlug", sc.name AS "categoryName"
+    FROM service_orders so
+    JOIN services s ON s.id = so.service_id
+    LEFT JOIN service_categories sc ON sc.id = s.category_id
+    WHERE so.client_id = $1`;
+  const params = [clientId];
+
+  if (status === 'active') {
+    sql += ` AND so.status IN ('pending_payment', 'processing', 'in_progress')`;
+  } else if (status === 'completed') {
+    sql += ` AND so.status = 'completed'`;
+  }
+
+  sql += ' ORDER BY so.id DESC';
+
+  const result = await query(sql, params);
+  const documents = result.rows.map((row) => ({
+    ...mapOrderRow(row),
+    createdAt: row.created_at,
+    hasDownload: Boolean(row.completed_file),
   }));
+
+  return {
+    documents,
+    counts: {
+      total: documents.length,
+      active: documents.filter((d) => ['Pending Payment', 'Processing', 'In Progress'].includes(d.status)).length,
+      completed: documents.filter((d) => d.status === 'Completed').length,
+    },
+  };
+}
+
+export async function getClientDocumentOrder(clientId, orderNumber) {
+  const result = await query(
+    `SELECT so.id, so.order_number, so.status, so.intake_form_data AS "formData",
+            so.expected_delivery, so.completed_file, so.milestone,
+            s.slug AS "templateId", s.name AS "templateName",
+            sc.slug AS "categorySlug", sc.name AS "categoryName"
+     FROM service_orders so
+     JOIN services s ON s.id = so.service_id
+     LEFT JOIN service_categories sc ON sc.id = s.category_id
+     WHERE so.client_id = $1 AND so.order_number = $2`,
+    [clientId, orderNumber]
+  );
+
+  return result.rows[0] ? mapOrderRow(result.rows[0]) : null;
 }
 
 export async function createOrder(clientId, { templateId, templateName, formData }) {
@@ -590,7 +753,7 @@ export async function sendMessage(senderUserId, threadId, { text, attachments = 
       title,
       body: `${senderName} sent you a message: "${messagePreview(text)}"`,
       type: 'message',
-      link: '/account/messages',
+      link: `/account/messages?thread=${encodeURIComponent(threadId)}`,
       audience,
     });
   }

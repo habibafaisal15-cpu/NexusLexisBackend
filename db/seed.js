@@ -1,8 +1,5 @@
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
-import { pool, query } from './index.js';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
+import { query } from './index.js';
+import { seedLibraryCatalog } from './librarySeed.js';
 
 /** Optional catalog rows only — no demo users, orders, or notifications. */
 export async function seedDatabase() {
@@ -17,4 +14,6 @@ export async function seedDatabase() {
     `);
     console.log('VLO plan catalog seeded.');
   }
+
+  await seedLibraryCatalog();
 }
