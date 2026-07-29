@@ -9,6 +9,7 @@ from docx.shared import Pt, RGBColor
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "docs" / "NexusLexis_API_Documentation.docx"
+OUT_BRILLIANCE = ROOT / "docs" / "NexusLexis_Brilliance_API_Documentation.docx"
 
 
 def mono(doc: Document, text: str, bold: bool = False, size: int = 10) -> None:
@@ -77,6 +78,12 @@ def build_document() -> Document:
     r = p.add_run("API Documentation")
     r.bold = True
     r.font.size = Pt(16)
+
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r = p.add_run("Brilliance EMS format · Version 1.1 · 29 July 2026")
+    r.font.size = Pt(10)
+    r.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
 
     doc.add_paragraph()
     intro = """Production URLs:
@@ -485,14 +492,17 @@ Source files: server.js · auth_backend/routes/*.js · routes/*.js · lex_backen
 
     # ── 17. Postman / Integration Tips ───────────────────────────────────────
     section(doc, "17. Postman / Integration Tips")
-    tips = """1. Use http://localhost:3000/api/auth/* for all auth (single tunnel via ngrok)
-2. Login → copy token → set Header: Authorization: Bearer <token>
-3. Signup OTP flow: send-otp → verify-otp → register with verificationToken
-4. switch-role returns new token — replace stored token after role switch
-5. File uploads: use form-data (multipart), not raw JSON
-6. Lawyer/CA dashboards require verified profile (admin approval)
-7. Main API dev mock: token mock-jwt-token-* + X-Client-Role: CorporateClient
-8. LEX WebSocket for real-time chat; REST /api/v1/lex/chat/ for HTTP clients
+    tips = """1. Production Auth: https://nexus-lexis-backend-45v4.vercel.app/api/auth
+2. Production Main: https://nexus-lexis-backend-ql8w.vercel.app/api/v2
+3. Login → store accessToken + refreshToken (token = accessToken alias)
+4. On 401 expired JWT → POST /api/auth/refresh with refreshToken
+5. Logout → POST /api/auth/logout with refreshToken
+6. Signup OTP: send-otp → verify-otp → register with verificationToken
+7. Forgot password: forgot-password → forgot-password/verify-otp → reset-password with resetToken
+8. switch-role returns new token — replace stored tokens after role switch
+9. File uploads: use form-data (multipart), not raw JSON
+10. Lawyer/CA dashboards require verified profile (admin approval)
+11. LEX WebSocket local only; production uses REST /api/v1/lex/chat/
 
 Example login success:
 {
@@ -559,7 +569,9 @@ def main() -> None:
     OUT.parent.mkdir(parents=True, exist_ok=True)
     doc = build_document()
     doc.save(str(OUT))
+    doc.save(str(OUT_BRILLIANCE))
     print(f"Created: {OUT}")
+    print(f"Created: {OUT_BRILLIANCE}")
 
 
 if __name__ == "__main__":
