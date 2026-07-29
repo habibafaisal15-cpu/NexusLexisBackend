@@ -27,6 +27,7 @@ const PORT = process.env.PORT || 3000;
 const LEX_API_URL = process.env.LEX_API_URL || 'http://127.0.0.1:8001';
 const AUTH_API_URL = process.env.AUTH_API_URL || 'http://127.0.0.1:3001';
 const UPLOADS_DIR = join(__dirname, 'uploads');
+const IS_VERCEL = process.env.VERCEL === '1';
 
 if (!existsSync(UPLOADS_DIR)) {
   mkdirSync(UPLOADS_DIR, { recursive: true });
@@ -42,7 +43,11 @@ async function initDatabase() {
   console.log('PostgreSQL connected and ready.');
 }
 
-await initDatabase();
+if (!IS_VERCEL || process.env.RUN_STARTUP_DB === 'true') {
+  await initDatabase();
+} else {
+  console.log('[startup] Skipping DB init on Vercel (run db:migrate separately)');
+}
 
 const app = express();
 const server = createServer(app);
@@ -517,51 +522,55 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: err.message || 'Internal server error' });
 });
 
-// ─── LEX WebSocket (proxies to Django REST) ─────────────────────────────────
+// ─── LEX WebSocket (local dev only — Vercel serverless has no WebSocket) ───
 
-const wss = new WebSocketServer({ server, path: '/api/lex/ws' });
+if (!IS_VERCEL) {
+  const wss = new WebSocketServer({ server, path: '/api/lex/ws' });
 
-function mapLexWsResponse(data) {
-  const isUrdu = data.language === 'UR' || /[\u0600-\u06FF]/.test(data.response || '');
-  const shortcuts = data.show_lawyer
-    ? [{ label: isUrdu ? 'وکیل تلاش کریں ←' : 'Find a Lawyer →', route: '/find-a-lawyer', icon: 'lawyer' }]
-    : [];
-  return { text: data.response, shortcuts };
+  function mapLexWsResponse(data) {
+    const isUrdu = data.language === 'UR' || /[\u0600-\u06FF]/.test(data.response || '');
+    const shortcuts = data.show_lawyer
+      ? [{ label: isUrdu ? 'وکیل تلاش کریں ←' : 'Find a Lawyer →', route: '/find-a-lawyer', icon: 'lawyer' }]
+      : [];
+    return { text: data.response, shortcuts };
+  }
+
+  wss.on('connection', (ws) => {
+    ws.on('message', async (raw) => {
+      try {
+        const { query: userQuery, session_key: sessionKey } = JSON.parse(raw.toString());
+        const response = await fetch(`${LEX_API_URL}/api/v1/lex/chat/`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: userQuery || '',
+            session_key: sessionKey || `ws_${Date.now()}`
+          })
+        });
+
+        if (!response.ok) {
+          throw new Error('LEX AI request failed');
+        }
+
+        const data = await response.json();
+        if (ws.readyState === ws.OPEN) {
+          ws.send(JSON.stringify(mapLexWsResponse(data)));
+        }
+      } catch {
+        if (ws.readyState === ws.OPEN) {
+          ws.send(JSON.stringify({
+            text: 'LEX AI is currently unavailable. Please try again shortly.',
+            shortcuts: []
+          }));
+        }
+      }
+    });
+  });
+
+  server.listen(PORT, () => {
+    console.log(`NexusLexis Main API running on http://localhost:${PORT}`);
+    console.log(`WebSocket available at ws://localhost:${PORT}/api/lex/ws`);
+  });
 }
 
-wss.on('connection', (ws) => {
-  ws.on('message', async (raw) => {
-    try {
-      const { query: userQuery, session_key: sessionKey } = JSON.parse(raw.toString());
-      const response = await fetch(`${LEX_API_URL}/api/v1/lex/chat/`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: userQuery || '',
-          session_key: sessionKey || `ws_${Date.now()}`
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error('LEX AI request failed');
-      }
-
-      const data = await response.json();
-      if (ws.readyState === ws.OPEN) {
-        ws.send(JSON.stringify(mapLexWsResponse(data)));
-      }
-    } catch {
-      if (ws.readyState === ws.OPEN) {
-        ws.send(JSON.stringify({
-          text: 'LEX AI is currently unavailable. Please try again shortly.',
-          shortcuts: []
-        }));
-      }
-    }
-  });
-});
-
-server.listen(PORT, () => {
-  console.log(`NexusLexis LEX API v2.0 running on http://localhost:${PORT}`);
-  console.log(`WebSocket available at ws://localhost:${PORT}/api/lex/ws`);
-});
+export default app;

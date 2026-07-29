@@ -2,7 +2,6 @@ import io
 import time
 import math
 import re
-import anthropic
 import requests
 import numpy as np
 import pandas as pd
@@ -10,12 +9,12 @@ from collections import Counter
 from django.conf import settings
 from .models import LexAISystemPrompt, LexChatHistory, ConversationSession
 from .intro_qa import LEX_INTRO_QA
+from .llm_client import chat_completion, LLMConnectionError, check_ollama_health
+from .law_guard import keyword_law_check
 
 # ==========================================
 # 1. INITIALIZATION, TF-IDF ENGINE & GLOBAL CACHE
 # ==========================================
-
-client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
 
 # Direct Public Download link for your targeted Live Document Excel Sheet
 EXCEL_DOWNLOAD_URL = "https://docs.google.com/spreadsheets/d/1jbWsT2dzag38-F97tnqW9S0YdtZnbiiv/export?format=xlsx"
@@ -107,10 +106,11 @@ class SimpleTFIDF:
         self.doc_vectors = np.array(self.doc_vectors)
 
     def _tokenize(self, text):
-        # Basic tokenization: lowercased alphanumeric words (supports Urdu Unicode block)
         text = str(text).lower().strip()
-        tokens = re.findall(r'\b\w+\b', text, re.UNICODE)
-        # Filter out common stop words to prevent false high similarities
+        # \w+ without word-boundaries — \b breaks on Urdu/Arabic script
+        tokens = re.findall(r'\w+', text, re.UNICODE)
+        if len(tokens) < 2 and re.search(r'[\u0600-\u06FF]', text):
+            tokens = [t.lower() for t in re.split(r'[\s\u060c,\.?!\u061f]+', text) if t.strip()]
         return [t for t in tokens if t not in ENGLISH_STOP_WORDS and t not in URDU_STOP_WORDS]
 
     def search(self, query, threshold=0.40):
@@ -158,6 +158,17 @@ OFF_TOPIC_MESSAGE = (
     "queries explicitly related to law, regulatory compliance, and corporate matters. "
     "Please ask a law-related question."
 )
+
+LLM_UNAVAILABLE_EN = (
+    "I couldn't find this in our verified question bank, and AI generation is temporarily "
+    "offline. Please try rephrasing your question, browse our document library, or "
+    "connect with a lawyer for personalised advice."
+)
+
+LLM_UNAVAILABLE_UR = (
+    "یہ سوال ہمارے تصدیق شدہ سوالنامے میں نہیں ملا، اور AI فی الوقت دستیاب نہیں ہے۔ "
+    "براہ کرم اپنا سوال دوبارہ لکھیں، دستاویزات دیکھیں، یا وکیل سے رابطہ کریں۔"
+)
 _CACHED_NUMPY_MATRIX = None
 _CACHED_ETAG = None
 _CACHED_TFIDF = None
@@ -189,6 +200,14 @@ def search_intro_qa(user_message: str) -> tuple:
     """
     Match against built-in LEX introductory Q&A before the external sheet bank.
     """
+    normalized = user_message.strip().lower().rstrip("!.?،؟")
+    for item in LEX_INTRO_QA:
+        for question in item["questions"]:
+            if normalized == question.strip().lower().rstrip("!.?،؟"):
+                answer = {"en": item["answer_en"], "ur": item["answer_ur"]}
+                print("--- LEX INTRO Q&A EXACT MATCH ---")
+                return answer, True
+
     tfidf = _get_intro_tfidf()
     answer, found, score = tfidf.search(user_message, threshold=INTRO_QA_THRESHOLD)
     if found:
@@ -300,25 +319,14 @@ def search_question_bank_numpy(user_message: str) -> tuple:
 
 def check_if_law_related(user_message: str) -> bool:
     """
-    Guardrail filter run before intro Q&A, Excel lookup, and Claude generation.
+    Guardrail filter before AI generation fallback.
+    Keyword-based only — avoids a second slow Ollama call before generation.
     """
-    classification_prompt = (
-        "You are a strict filtering agent for NexusLexis Pakistan. "
-        "Analyze the user message and determine if it is explicitly related to law, corporate registration, "
-        "tax compliance, courts, legal processes, or business regulations. "
-        "You must reply with exactly ONE word: 'YES' or 'NO'. Do not include punctuation or sentences.\n\n"
-        f"User Message: \"{user_message}\"\n\nClassification:"
-    )
-    try:
-        response = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=5,
-            messages=[{"role": "user", "content": classification_prompt}]
-        )
-        verdict = response.content[0].text.strip().upper()
-        return "YES" in verdict
-    except Exception:
-        return True
+    keyword_result = keyword_law_check(user_message)
+    if keyword_result is not None:
+        return keyword_result
+    # Ambiguous text on a legal platform — allow through to LLM rather than blocking
+    return True
 
 
 def build_conversational_history(session_key: str, current_message: str, limit: int = 5) -> list:
@@ -350,10 +358,10 @@ def build_conversational_history(session_key: str, current_message: str, limit: 
 def run_lex_rag_pipeline(user_message: str, session_key: str) -> dict:
     """
     Primary engine router.
-    1. Law-topic guardrail
-    2. Built-in intro Q&A
-    3. Excel question bank (semantic TF-IDF)
-    4. Claude fallback
+    1. Built-in intro Q&A
+    2. Excel question bank (semantic TF-IDF)
+    3. Law-topic guardrail (only before AI generation)
+    4. Qwen fallback (Ollama)
     """
     is_urdu = any(u'\u0600' <= c <= u'\u06FF' for c in user_message)
     detected_lang = "UR" if is_urdu else "EN"
@@ -368,24 +376,7 @@ def run_lex_rag_pipeline(user_message: str, session_key: str) -> dict:
         session_obj.title = user_message[:50] + "..." if len(user_message) > 50 else user_message
         session_obj.save()
 
-    # STEP 2: Law-topic filter (before sheet lookup or generation)
-    if not check_if_law_related(user_message):
-        LexChatHistory.objects.create(
-            session_key=session_key,
-            user_message=user_message,
-            ai_response=OFF_TOPIC_MESSAGE,
-            language=detected_lang,
-            register="PLAIN",
-            show_lawyer=False
-        )
-        return {
-            "response": OFF_TOPIC_MESSAGE,
-            "language": detected_lang,
-            "register": "PLAIN",
-            "show_lawyer": False
-        }
-
-    # STEP 3: Built-in LEX introductory Q&A, then external sheet bank
+    # STEP 2: Built-in LEX introductory Q&A, then external sheet bank (before guardrail)
     intro_answer, intro_found = search_intro_qa(user_message)
     if intro_found:
         response_text = intro_answer["ur"] if detected_lang == "UR" else intro_answer["en"]
@@ -421,6 +412,23 @@ def run_lex_rag_pipeline(user_message: str, session_key: str) -> dict:
             "show_lawyer": False
         }
 
+    # STEP 3: Law-topic filter — only for AI generation fallback
+    if not check_if_law_related(user_message):
+        LexChatHistory.objects.create(
+            session_key=session_key,
+            user_message=user_message,
+            ai_response=OFF_TOPIC_MESSAGE,
+            language=detected_lang,
+            register="PLAIN",
+            show_lawyer=False
+        )
+        return {
+            "response": OFF_TOPIC_MESSAGE,
+            "language": detected_lang,
+            "register": "PLAIN",
+            "show_lawyer": False
+        }
+
     # STEP 4: Fallback Prompt Assembly
     active_prompt_record = LexAISystemPrompt.objects.first()
     system_instruction = active_prompt_record.prompt_text if active_prompt_record else "You are Lex, a legal information assistant."
@@ -435,25 +443,29 @@ def run_lex_rag_pipeline(user_message: str, session_key: str) -> dict:
 
     conversation_payload = build_conversational_history(session_key, user_message)
 
-    # STEP 4: Fallback to Claude Generation (1 call handles both check and answer)
-    try:
-        response = client.messages.create(
-            model="claude-sonnet-5",
-            max_tokens=1500,
-            system=enforced_system_context,
-            messages=conversation_payload
-        )
-        ai_response = "".join(block.text for block in response.content if block.type == "text")
-    except Exception as e:
-        print("--- ANTHROPIC GENERATION ERROR ---")
-        print(e)
-        ai_response = f"Connection error detail: {str(e)}"
+    # STEP 5: Fallback to Qwen via Ollama (skip quickly if Ollama is down)
+    llm_health = check_ollama_health()
+    if not llm_health.get("ok") or not llm_health.get("model_available"):
+        ai_response = LLM_UNAVAILABLE_UR if detected_lang == "UR" else LLM_UNAVAILABLE_EN
+    else:
+        try:
+            ai_response = chat_completion(
+                conversation_payload,
+                system=enforced_system_context,
+                max_tokens=settings.LLM_MAX_TOKENS,
+                model=settings.LLM_MODEL,
+                timeout=settings.LLM_GENERATION_TIMEOUT,
+            )
+        except LLMConnectionError as e:
+            print("--- QWEN / OLLAMA GENERATION ERROR ---")
+            print(e)
+            ai_response = LLM_UNAVAILABLE_UR if detected_lang == "UR" else LLM_UNAVAILABLE_EN
 
-    # STEP 5: Identify Urgent Context Flags
+    # STEP 6: Identify Urgent Context Flags
     urgency_keywords = ["sue", "court", "arrest", "fir", "dispute", "fraud", "police", "عدالت", "کیس", "تھانہ"]
     show_lawyer = any(keyword in user_message.lower() for keyword in urgency_keywords)
 
-    # STEP 6: DB Commit Logs
+    # STEP 7: DB Commit Logs
     LexChatHistory.objects.create(
         session_key=session_key,
         user_message=user_message,

@@ -77,6 +77,14 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
-# Configure your Anthropic token via environment variable
-ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
+
+# Local LLM — Qwen via Ollama (see lex_backend/.env.example)
+LLM_BASE_URL = os.environ.get('LLM_BASE_URL', 'http://localhost:11434')
+LLM_MODEL = os.environ.get('LLM_MODEL', 'qwen2.5:7b-instruct')
+LLM_GUARD_MODEL = os.environ.get('LLM_GUARD_MODEL', LLM_MODEL)
+LLM_MAX_TOKENS = int(os.environ.get('LLM_MAX_TOKENS', '400'))
+LLM_TIMEOUT = int(os.environ.get('LLM_TIMEOUT', '120'))
+LLM_GUARD_TIMEOUT = int(os.environ.get('LLM_GUARD_TIMEOUT', '8'))
+LLM_GENERATION_TIMEOUT = int(os.environ.get('LLM_GENERATION_TIMEOUT', '120'))
+
 APPEND_SLASH = False

@@ -32,7 +32,13 @@ async function initDatabase() {
   await seedDemoUsers();
 }
 
-await initDatabase();
+const IS_VERCEL = process.env.VERCEL === '1';
+
+if (!IS_VERCEL || process.env.RUN_STARTUP_DB === 'true') {
+  await initDatabase();
+} else {
+  console.log('[startup] Skipping DB init on Vercel (run db:migrate separately)');
+}
 
 app.get('/', (_req, res) => {
   res.json({
@@ -65,30 +71,38 @@ app.use((_req, res) => {
   res.status(404).json({ error: 'Route not found' });
 });
 
-app.listen(PORT, async () => {
-  console.log(`NexusLexis Auth API running on http://localhost:${PORT}`);
-  const isProduction = process.env.NODE_ENV === 'production';
+async function startLocalServer() {
+  app.listen(PORT, async () => {
+    console.log(`NexusLexis Auth API running on http://localhost:${PORT}`);
+    const isProduction = process.env.NODE_ENV === 'production';
 
-  if (isEmailDeliveryConfigured()) {
-    const delivery = await verifyEmailDelivery();
-    if (delivery.ok) {
-      console.log(`[signup-otp] Email delivery verified (${delivery.provider}) — OTP codes will be emailed`);
-      if (delivery.sender) console.log(`[signup-otp] Sender: ${delivery.sender}`);
+    if (isEmailDeliveryConfigured()) {
+      const delivery = await verifyEmailDelivery();
+      if (delivery.ok) {
+        console.log(`[signup-otp] Email delivery verified (${delivery.provider}) — OTP codes will be emailed`);
+        if (delivery.sender) console.log(`[signup-otp] Sender: ${delivery.sender}`);
+      } else {
+        console.warn('[signup-otp] Email delivery configured but verification failed:');
+        console.warn(delivery.error);
+        if (delivery.raw && delivery.raw !== delivery.error) {
+          console.warn(`[signup-otp] Detail: ${delivery.raw}`);
+        }
+        if (isProduction || process.env.REQUIRE_EMAIL_DELIVERY === 'true') {
+          console.error('[signup-otp] Refusing to start without working email in production.');
+          process.exit(1);
+        }
+      }
+    } else if (isProduction || process.env.REQUIRE_EMAIL_DELIVERY === 'true') {
+      console.error('[signup-otp] No email provider configured. Set MS365_* (Microsoft Graph) in .env');
+      process.exit(1);
     } else {
-      console.warn('[signup-otp] Email delivery configured but verification failed:');
-      console.warn(delivery.error);
-      if (delivery.raw && delivery.raw !== delivery.error) {
-        console.warn(`[signup-otp] Detail: ${delivery.raw}`);
-      }
-      if (isProduction || process.env.REQUIRE_EMAIL_DELIVERY === 'true') {
-        console.error('[signup-otp] Refusing to start without working email in production.');
-        process.exit(1);
-      }
+      console.warn('[signup-otp] No email provider configured — set MS365_* in .env for real OTP delivery');
     }
-  } else if (isProduction || process.env.REQUIRE_EMAIL_DELIVERY === 'true') {
-    console.error('[signup-otp] No email provider configured. Set MS365_* (Microsoft Graph) in .env');
-    process.exit(1);
-  } else {
-    console.warn('[signup-otp] No email provider configured — set MS365_* in .env for real OTP delivery');
-  }
-});
+  });
+}
+
+if (!IS_VERCEL) {
+  startLocalServer();
+}
+
+export default app;

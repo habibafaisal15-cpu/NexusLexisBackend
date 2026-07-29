@@ -1,0 +1,9 @@
+lex_backend/
+nexuslexis3.0/
+nexus_lexus_project/
+docs/
+postman/
+_recovery_extract/
+uploads/
+*.md
+!README.md

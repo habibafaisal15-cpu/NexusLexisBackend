@@ -9,7 +9,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export async function runSchema() {
   const fullSchema = readFileSync(
-    join(__dirname, '..', '..', 'backend', 'db', 'full_schema.sql'),
+    join(__dirname, '..', '..', 'db', 'full_schema.sql'),
     'utf-8'
   );
   await pool.query(fullSchema);

@@ -1,5 +1,67 @@
 LEX_INTRO_QA = [
     {
+        "category": "Greetings",
+        "questions": [
+            "Hi",
+            "hi",
+            "Hello",
+            "hello",
+            "Hey",
+            "hey",
+            "Salam",
+            "salam",
+            "Assalam o alaikum",
+            "AOA",
+            "Good morning",
+            "Good afternoon",
+            "How are you",
+            "How are you?",
+            "how are you",
+            "السلام علیکم",
+            "سلام",
+            "آپ کیسے ہیں",
+            "کیا حال ہے",
+        ],
+        "answer_en": (
+            "Hello! I am LEX, your dedicated Pakistani legal assistant on Nexus Lexis. "
+            "Ask me about company registration, property, contracts, tax, family law, or any "
+            "legal process — in English, Urdu, or Roman Urdu."
+        ),
+        "answer_ur": (
+            "السلام علیکم! میں LEX ہوں، نیکسس لیکسس کا پاکستانی قانونی معاون۔ "
+            "کمپنی رجسٹریشن، جائیداد، معاہدے، ٹیکس، خاندانی قانون یا کسی بھی "
+            "قانونی عمل کے بارے میں انگریزی، اردو یا رومن اردو میں پوچھیں۔"
+        ),
+    },
+    {
+        "category": "Criminal Law — FIR",
+        "questions": [
+            "What is an FIR?",
+            "What is an FIR",
+            "What is FIR?",
+            "What is FIR",
+            "Define FIR",
+            "Explain FIR",
+            "FIR kya hai",
+            "ایف آئی آر کیا ہے",
+            "ایف آئی آر",
+        ],
+        "answer_en": (
+            "An FIR (First Information Report) is the written record prepared by Pakistani police "
+            "when they receive information about a cognizable offence — a crime police can investigate "
+            "without a magistrate's prior approval. It is registered under Section 154 of the Code of "
+            "Criminal Procedure (CrPC) and starts the criminal investigation process. The informant has "
+            "a right to receive a free copy of the FIR."
+        ),
+        "answer_ur": (
+            "ایف آئی آر (First Information Report) وہ تحریری رپورٹ ہے جو پولیس تب بناتی ہے جب "
+            "کسی قابلِ ضبط (cognizable) جرم کی اطلاع ملتی ہے — ایسا جرم جس کی تفتیش کے لیے "
+            "مجاز کی پیشگی اجازت ضروری نہیں۔ یہ Code of Criminal Procedure (CrPC) کی دفعہ 154 "
+            "کے تحت درج ہوتی ہے اور مقدمے کی تفتیش شروع کرتی ہے۔ اطلاع دینے والے کو FIR "
+            "کی مفت نقل لینے کا حق ہے۔"
+        ),
+    },
+    {
         "category": "General Introduction & Capabilities",
         "questions": [
             "What is LEX and how can it help me?",
