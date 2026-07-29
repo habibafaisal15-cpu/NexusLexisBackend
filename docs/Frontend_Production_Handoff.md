@@ -1,8 +1,8 @@
 ---
 Document Title: Nexus Lexis — Frontend Production Integration Handoff
 Document ID: NL-FE-PROD-001
-Version: 1.0
-Last Updated: 29 July 2026
+Version: 1.1
+Last Updated: 29 July 2026 (evening — refresh token + forgot password added)
 Classification: Internal — Frontend Team
 Owner: Nexus Lexis Backend / Platform
 Applies To: Frontend developers integrating with production APIs
@@ -70,15 +70,67 @@ Content-Type: application/json
 }
 ```
 
-**Response:** `{ "token": "<JWT>", "user": { ... } }`
+**Response:**
+```json
+{
+  "accessToken": "<JWT>",
+  "refreshToken": "<opaque-refresh-token>",
+  "token": "<JWT>",
+  "expiresIn": "24h",
+  "refreshExpiresAt": "...",
+  "user": { ... }
+}
+```
 
-Store the JWT and send on all protected requests:
+`token` is the same as `accessToken` (backward compatible). Store **both** tokens.
+
+Send the access token on protected requests:
 
 ```
-Authorization: Bearer <token>
+Authorization: Bearer <accessToken>
 ```
 
-## 4.2 Signup with OTP
+## 4.2 Refresh token & logout
+
+When the access token expires (401), get a new one:
+
+```
+POST {VITE_AUTH_API_URL}/refresh
+Content-Type: application/json
+
+{ "refreshToken": "<stored-refresh-token>" }
+```
+
+**Response:** new `accessToken` + new `refreshToken` (rotation — replace stored refresh token).
+
+**Logout** (revoke refresh token):
+
+```
+POST {VITE_AUTH_API_URL}/logout
+Content-Type: application/json
+
+{ "refreshToken": "<stored-refresh-token>" }
+```
+
+## 4.3 Forgot password
+
+Three-step flow (OTP by email):
+
+```
+POST {VITE_AUTH_API_URL}/forgot-password
+→ { "email": "user@example.com" }
+
+POST {VITE_AUTH_API_URL}/forgot-password/verify-otp
+→ { "email": "...", "code": "123456" }
+→ returns { "resetToken": "..." }
+
+POST {VITE_AUTH_API_URL}/reset-password
+→ { "email": "...", "resetToken": "...", "password": "newpassword" }
+```
+
+> Google-only accounts cannot reset password — show “Continue with Google” instead.
+
+## 4.4 Signup with OTP
 
 ```
 POST {VITE_AUTH_API_URL}/register/send-otp     → { "email" }
@@ -88,7 +140,7 @@ POST {VITE_AUTH_API_URL}/register              → { "fullName", "email", "passw
 
 Roles for registration: `client`, `lawyer`, `ca`.
 
-## 4.3 Google Sign-In
+## 4.5 Google Sign-In
 
 **Option A — One Tap / popup (recommended):**
 
@@ -112,7 +164,7 @@ GET {VITE_AUTH_API_URL}/google/url
 → user lands on FRONTEND_URL/login?token=...
 ```
 
-## 4.4 Current user
+## 4.6 Current user
 
 ```
 GET {VITE_AUTH_API_URL}/me
