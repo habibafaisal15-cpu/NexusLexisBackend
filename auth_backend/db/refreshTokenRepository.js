@@ -36,6 +36,7 @@ export async function findValidRefreshToken(rawToken) {
     `SELECT rt.id, rt.auth_user_id, rt.expires_at,
             au.id AS user_id, au.full_name, au.email, au.role, au.auth_provider,
             au.password_hash, au.is_active, au.phone
+     FROM refresh_tokens rt
      JOIN auth_users au ON au.id = rt.auth_user_id
      WHERE rt.token_hash = $1
        AND rt.revoked_at IS NULL
