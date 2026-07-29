@@ -84,6 +84,31 @@ function buildOtpEmailContent(otpCode, expiresMinutes) {
   return { subject, text, html };
 }
 
+function buildPasswordResetEmailContent(otpCode, expiresMinutes) {
+  const subject = 'Reset your Nexus Lexis password';
+  const text = [
+    'You requested a password reset for your Nexus Lexis account.',
+    '',
+    `Your reset code is: ${otpCode}`,
+    '',
+    `This code expires in ${expiresMinutes} minutes.`,
+    '',
+    'If you did not request this, you can ignore this email.',
+  ].join('\n');
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; line-height: 1.5; color: #16213e;">
+      <h2 style="margin-bottom: 8px;">Reset your password</h2>
+      <p>Use this code to reset your Nexus Lexis password:</p>
+      <p style="font-size: 28px; letter-spacing: 6px; font-weight: 700; margin: 24px 0;">${otpCode}</p>
+      <p style="color: #666;">This code expires in ${expiresMinutes} minutes.</p>
+      <p style="color: #666; font-size: 13px;">If you did not request this, you can ignore this email.</p>
+    </div>
+  `;
+
+  return { subject, text, html };
+}
+
 async function getTransporter() {
   if (!isSmtpConfigured()) {
     return null;
@@ -180,6 +205,37 @@ export async function sendSignupOtpEmail({ email, otpCode, expiresMinutes = 10 }
     errors[0]?.includes('smtp_auth_disabled') || errors.join(' ').includes('smtp_auth_disabled')
       ? 'Email delivery is blocked by Microsoft 365. Configure Microsoft Graph (MS365_* in .env) or Resend (RESEND_API_KEY).'
       : 'Could not send verification email. Configure Microsoft Graph or Resend in auth_backend/.env'
+  );
+  smtpError.code = 'EMAIL_DELIVERY_FAILED';
+  throw smtpError;
+}
+
+export async function sendPasswordResetOtpEmail({ email, otpCode, expiresMinutes = 10 }) {
+  const { subject, text, html } = buildPasswordResetEmailContent(otpCode, expiresMinutes);
+  const payload = { to: email, subject, text, html };
+  const providers = getEmailProviderOrder();
+  const errors = [];
+
+  for (const provider of providers) {
+    try {
+      const result = await sendWithProvider(provider, payload);
+      if (result?.delivered) {
+        console.log(`[password-reset] Sent reset OTP to ${email} via ${result.provider || provider}`);
+        return result;
+      }
+    } catch (err) {
+      console.error(`[password-reset] ${provider} failed for ${email}:`, err.message);
+      errors.push(`${provider}: ${err.message}`);
+    }
+  }
+
+  if (!isGraphConfigured() && !isResendConfigured() && !isGmailConfigured() && !isSmtpConfigured()) {
+    console.warn(`[password-reset] No email provider configured — OTP stored but not emailed to ${email}`);
+    return { delivered: false, devMode: true };
+  }
+
+  const smtpError = new Error(
+    errors[0] || 'Could not send password reset email. Configure Microsoft Graph or SMTP in auth_backend/.env'
   );
   smtpError.code = 'EMAIL_DELIVERY_FAILED';
   throw smtpError;

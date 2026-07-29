@@ -1,7 +1,7 @@
 import jwt from 'jsonwebtoken';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'nexuslexis-dev-secret-key';
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '24h';
+const JWT_ACCESS_EXPIRES_IN = process.env.JWT_ACCESS_EXPIRES_IN || process.env.JWT_EXPIRES_IN || '24h';
 
 const ROLE_LABELS = {
   client: 'CorporateClient',
@@ -10,8 +10,12 @@ const ROLE_LABELS = {
   admin: 'Admin',
 };
 
+export function signAccessToken(payload) {
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_ACCESS_EXPIRES_IN });
+}
+
 export function signToken(payload) {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+  return signAccessToken(payload);
 }
 
 export function authMiddleware(req, res, next) {

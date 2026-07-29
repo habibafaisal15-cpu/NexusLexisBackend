@@ -50,6 +50,10 @@ app.get('/', (_req, res) => {
     endpoints: {
       health: '/api/health',
       login: 'POST /api/auth/login',
+      refresh: 'POST /api/auth/refresh',
+      logout: 'POST /api/auth/logout',
+      forgotPassword: 'POST /api/auth/forgot-password',
+      resetPassword: 'POST /api/auth/reset-password',
       register: 'POST /api/auth/register',
       me: 'GET /api/auth/me',
       profile: 'GET /api/auth/profile',

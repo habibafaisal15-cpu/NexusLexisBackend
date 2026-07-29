@@ -8,11 +8,17 @@ import {
   findUserByEmail,
   ALL_ROLES
 } from '../services/authService.js';
-import { getProfileForUser, formatProfileResponse } from '../services/profileService.js';
+import { getProfileForUser } from '../services/profileService.js';
 import * as profileRepo from '../db/profileRepository.js';
-import { signToken, authMiddleware, buildTokenPayload, buildTokenPayloadFromBundle, toPublicUser } from '../middleware/auth.js';
+import { authMiddleware, buildTokenPayload, buildTokenPayloadFromBundle, toPublicUser } from '../middleware/auth.js';
 import { validateEmailForSignup } from '../utils/validation.js';
 import { requestSignupOtp, verifySignupOtp } from '../services/otpService.js';
+import { buildAuthSession, refreshAuthSession, logoutRefreshToken } from '../services/tokenService.js';
+import {
+  requestPasswordReset,
+  verifyPasswordResetOtp,
+  resetPasswordWithToken,
+} from '../services/passwordResetService.js';
 import { asyncHandler } from '../../shared/lib/asyncHandler.js';
 
 const router = Router();
@@ -20,33 +26,8 @@ const router = Router();
 async function sendAuthSuccess(res, result, status = 200) {
   const authUser = result.authUser || result;
   const dashboardUser = result.dashboardUser || null;
-  const userId = dashboardUser?.id;
-
-  let payload;
-  let profile = null;
-
-  if (userId) {
-    const bundle = await profileRepo.getFullProfileBundle(userId);
-    if (bundle) {
-      payload = buildTokenPayloadFromBundle(authUser, bundle);
-      profile = formatProfileResponse(bundle, authUser);
-    }
-  }
-
-  if (!payload) {
-    payload = buildTokenPayload(authUser, dashboardUser);
-  }
-
-  const token = signToken(payload);
-  res.status(status).json({
-    token,
-    user: {
-      ...toPublicUser(authUser),
-      roles: payload.roles,
-      dashboardUserId: userId || payload.userId,
-      profile
-    }
-  });
+  const session = await buildAuthSession(authUser, dashboardUser);
+  res.status(status).json(session);
 }
 
 router.post('/register', asyncHandler(async (req, res) => {
@@ -59,7 +40,7 @@ router.post('/register', asyncHandler(async (req, res) => {
     role,
     verificationToken,
   });
-  sendAuthSuccess(res, user, 201);
+  await sendAuthSuccess(res, user, 201);
 }));
 
 router.post('/register/send-otp', asyncHandler(async (req, res) => {
@@ -117,6 +98,59 @@ router.post('/login', asyncHandler(async (req, res) => {
   await sendAuthSuccess(res, user);
 }));
 
+router.post('/refresh', asyncHandler(async (req, res) => {
+  const refreshToken = req.body.refreshToken || req.body.refresh_token;
+  if (!refreshToken) {
+    return res.status(400).json({ error: 'Refresh token is required' });
+  }
+
+  try {
+    const session = await refreshAuthSession(refreshToken);
+    res.json(session);
+  } catch (err) {
+    res.status(401).json({ error: err.message || 'Invalid refresh token' });
+  }
+}));
+
+router.post('/logout', asyncHandler(async (req, res) => {
+  const refreshToken = req.body.refreshToken || req.body.refresh_token;
+  try {
+    const result = await logoutRefreshToken(refreshToken);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message || 'Logout failed' });
+  }
+}));
+
+router.post('/forgot-password', asyncHandler(async (req, res) => {
+  const { email } = req.body;
+  const result = await requestPasswordReset(email);
+  if (!result.ok) {
+    const status = result.code === 'RATE_LIMITED' ? 429 : 400;
+    return res.status(status).json(result);
+  }
+  res.json(result);
+}));
+
+router.post('/forgot-password/verify-otp', asyncHandler(async (req, res) => {
+  const { email, code, otp } = req.body;
+  const result = await verifyPasswordResetOtp(email, code || otp);
+  if (!result.ok) {
+    return res.status(400).json(result);
+  }
+  res.json(result);
+}));
+
+router.post('/reset-password', asyncHandler(async (req, res) => {
+  const { email, resetToken, password, newPassword } = req.body;
+  const result = await resetPasswordWithToken({
+    email,
+    resetToken,
+    password: newPassword || password,
+  });
+  res.json(result);
+}));
+
 router.get('/me', authMiddleware, asyncHandler(async (req, res) => {
   const user = await findUserByEmail(req.user.email);
   if (!user || !user.is_active) {
@@ -160,11 +194,11 @@ router.get('/google/callback', asyncHandler(async (req, res) => {
   }
 
   const result = await exchangeGoogleAuthCode(String(code), 'client');
-  const payload = buildTokenPayload(result.authUser, result.dashboardUser);
-  const token = signToken(payload);
-  const frontend = process.env.FRONTEND_URL || 'http://localhost:5175';
+  const session = await buildAuthSession(result.authUser, result.dashboardUser);
+  const frontend = (process.env.FRONTEND_URL || 'http://localhost:5175').trim();
   const redirectUrl = new URL('/login', frontend);
-  redirectUrl.searchParams.set('token', token);
+  redirectUrl.searchParams.set('token', session.accessToken);
+  redirectUrl.searchParams.set('refreshToken', session.refreshToken);
   redirectUrl.searchParams.set('state', String(state || 'login'));
   res.redirect(redirectUrl.toString());
 }));
@@ -178,7 +212,7 @@ router.post('/google/token', asyncHandler(async (req, res) => {
   }
 
   const user = await loginWithGoogleIdToken(tokenValue, role);
-  sendAuthSuccess(res, user);
+  await sendAuthSuccess(res, user);
 }));
 
 router.use((err, _req, res, _next) => {
