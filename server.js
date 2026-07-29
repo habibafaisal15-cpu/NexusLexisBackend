@@ -26,11 +26,15 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
 const LEX_API_URL = process.env.LEX_API_URL || 'http://127.0.0.1:8001';
 const AUTH_API_URL = process.env.AUTH_API_URL || 'http://127.0.0.1:3001';
-const UPLOADS_DIR = join(__dirname, 'uploads');
 const IS_VERCEL = process.env.VERCEL === '1';
+const UPLOADS_DIR = IS_VERCEL ? join('/tmp', 'uploads') : join(__dirname, 'uploads');
 
-if (!existsSync(UPLOADS_DIR)) {
-  mkdirSync(UPLOADS_DIR, { recursive: true });
+try {
+  if (!existsSync(UPLOADS_DIR)) {
+    mkdirSync(UPLOADS_DIR, { recursive: true });
+  }
+} catch (err) {
+  console.warn('[uploads] Could not create uploads dir:', err.message);
 }
 
 async function initDatabase() {
@@ -43,14 +47,16 @@ async function initDatabase() {
   console.log('PostgreSQL connected and ready.');
 }
 
-if (!IS_VERCEL || process.env.RUN_STARTUP_DB === 'true') {
-  await initDatabase();
-} else {
-  console.log('[startup] Skipping DB init on Vercel (run db:migrate separately)');
-}
-
 const app = express();
 const server = createServer(app);
+
+app.get('/', (_req, res) => {
+  res.json({
+    service: 'NexusLexis Main API',
+    status: 'ok',
+    health: '/api/health',
+  });
+});
 
 const corsOrigins = (process.env.FRONTEND_URLS || 'http://localhost:5175,http://localhost:5173')
   .split(',')
@@ -525,6 +531,8 @@ app.use((err, _req, res, _next) => {
 // ─── LEX WebSocket (local dev only — Vercel serverless has no WebSocket) ───
 
 if (!IS_VERCEL) {
+  await initDatabase();
+
   const wss = new WebSocketServer({ server, path: '/api/lex/ws' });
 
   function mapLexWsResponse(data) {
