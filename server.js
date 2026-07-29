@@ -1,7 +1,5 @@
 import express from 'express';
 import cors from 'cors';
-import { createServer } from 'http';
-import { WebSocketServer } from 'ws';
 import multer from 'multer';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
@@ -26,7 +24,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
 const LEX_API_URL = process.env.LEX_API_URL || 'http://127.0.0.1:8001';
 const AUTH_API_URL = process.env.AUTH_API_URL || 'http://127.0.0.1:3001';
-const IS_VERCEL = process.env.VERCEL === '1';
+const IS_VERCEL = Boolean(process.env.VERCEL);
 const UPLOADS_DIR = IS_VERCEL ? join('/tmp', 'uploads') : join(__dirname, 'uploads');
 
 try {
@@ -48,7 +46,6 @@ async function initDatabase() {
 }
 
 const app = express();
-const server = createServer(app);
 
 app.get('/', (_req, res) => {
   res.json({
@@ -177,11 +174,11 @@ app.post('/api/v2/auth/session', asyncHandler(async (_req, res) => {
 
 // ─── Lawyer & CA dashboards (mainsite frontend) ─────────────────────────────
 
-app.use('/api/v2/lawyer', createLawyerRouter(LEX_API_URL));
+app.use('/api/v2/lawyer', createLawyerRouter(LEX_API_URL, UPLOADS_DIR));
 app.use('/api/v2/messages', createMessageRouter());
 app.use('/api/v2/lawyer/messages', createMessageRouter());
 app.use('/api/v2/ca/messages', createMessageRouter());
-app.use('/api/v2/ca', createCaRouter());
+app.use('/api/v2/ca', createCaRouter(UPLOADS_DIR));
 
 // ─── Workspace bootstrap ────────────────────────────────────────────────────
 
@@ -531,54 +528,63 @@ app.use((err, _req, res, _next) => {
 // ─── LEX WebSocket (local dev only — Vercel serverless has no WebSocket) ───
 
 if (!IS_VERCEL) {
-  await initDatabase();
+  initDatabase()
+    .then(async () => {
+      const { createServer } = await import('http');
+      const { WebSocketServer } = await import('ws');
+      const server = createServer(app);
 
-  const wss = new WebSocketServer({ server, path: '/api/lex/ws' });
-
-  function mapLexWsResponse(data) {
-    const isUrdu = data.language === 'UR' || /[\u0600-\u06FF]/.test(data.response || '');
-    const shortcuts = data.show_lawyer
-      ? [{ label: isUrdu ? 'وکیل تلاش کریں ←' : 'Find a Lawyer →', route: '/find-a-lawyer', icon: 'lawyer' }]
-      : [];
-    return { text: data.response, shortcuts };
-  }
-
-  wss.on('connection', (ws) => {
-    ws.on('message', async (raw) => {
-      try {
-        const { query: userQuery, session_key: sessionKey } = JSON.parse(raw.toString());
-        const response = await fetch(`${LEX_API_URL}/api/v1/lex/chat/`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            message: userQuery || '',
-            session_key: sessionKey || `ws_${Date.now()}`
-          })
-        });
-
-        if (!response.ok) {
-          throw new Error('LEX AI request failed');
-        }
-
-        const data = await response.json();
-        if (ws.readyState === ws.OPEN) {
-          ws.send(JSON.stringify(mapLexWsResponse(data)));
-        }
-      } catch {
-        if (ws.readyState === ws.OPEN) {
-          ws.send(JSON.stringify({
-            text: 'LEX AI is currently unavailable. Please try again shortly.',
-            shortcuts: []
-          }));
-        }
+      function mapLexWsResponse(data) {
+        const isUrdu = data.language === 'UR' || /[\u0600-\u06FF]/.test(data.response || '');
+        const shortcuts = data.show_lawyer
+          ? [{ label: isUrdu ? 'وکیل تلاش کریں ←' : 'Find a Lawyer →', route: '/find-a-lawyer', icon: 'lawyer' }]
+          : [];
+        return { text: data.response, shortcuts };
       }
-    });
-  });
 
-  server.listen(PORT, () => {
-    console.log(`NexusLexis Main API running on http://localhost:${PORT}`);
-    console.log(`WebSocket available at ws://localhost:${PORT}/api/lex/ws`);
-  });
+      const wss = new WebSocketServer({ server, path: '/api/lex/ws' });
+
+      wss.on('connection', (ws) => {
+        ws.on('message', async (raw) => {
+          try {
+            const { query: userQuery, session_key: sessionKey } = JSON.parse(raw.toString());
+            const response = await fetch(`${LEX_API_URL}/api/v1/lex/chat/`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                message: userQuery || '',
+                session_key: sessionKey || `ws_${Date.now()}`
+              })
+            });
+
+            if (!response.ok) {
+              throw new Error('LEX AI request failed');
+            }
+
+            const data = await response.json();
+            if (ws.readyState === ws.OPEN) {
+              ws.send(JSON.stringify(mapLexWsResponse(data)));
+            }
+          } catch {
+            if (ws.readyState === ws.OPEN) {
+              ws.send(JSON.stringify({
+                text: 'LEX AI is currently unavailable. Please try again shortly.',
+                shortcuts: []
+              }));
+            }
+          }
+        });
+      });
+
+      server.listen(PORT, () => {
+        console.log(`NexusLexis Main API running on http://localhost:${PORT}`);
+        console.log(`WebSocket available at ws://localhost:${PORT}/api/lex/ws`);
+      });
+    })
+    .catch((err) => {
+      console.error('Failed to start server:', err);
+      process.exit(1);
+    });
 }
 
 export default app;

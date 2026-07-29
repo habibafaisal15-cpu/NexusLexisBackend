@@ -5,8 +5,6 @@ import * as pro from '../db/professionalRepository.js';
 import { dismissNotification, clearNotifications } from '../db/repository.js';
 import { asyncHandler } from '../shared/lib/asyncHandler.js';
 
-const upload = multer({ dest: 'uploads/' });
-
 function requireLawyer(req, res) {
   const userId = getUserId(req);
   if (!userId) {
@@ -26,7 +24,8 @@ function requireLawyer(req, res) {
   return userId;
 }
 
-export function createLawyerRouter(lexApiUrl) {
+export function createLawyerRouter(lexApiUrl, uploadsDir = 'uploads/') {
+  const upload = multer({ dest: uploadsDir });
   const router = Router();
 
   router.get('/dashboard', authMiddleware, asyncHandler(async (req, res) => {

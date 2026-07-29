@@ -5,8 +5,6 @@ import * as pro from '../db/professionalRepository.js';
 import { dismissNotification, clearNotifications } from '../db/repository.js';
 import { asyncHandler } from '../shared/lib/asyncHandler.js';
 
-const upload = multer({ dest: 'uploads/' });
-
 function requireCA(req, res) {
 
   const userId = getUserId(req);
@@ -33,8 +31,8 @@ function requireCA(req, res) {
 
 
 
-export function createCaRouter() {
-
+export function createCaRouter(uploadsDir = 'uploads/') {
+  const upload = multer({ dest: uploadsDir });
   const router = Router();
 
 
