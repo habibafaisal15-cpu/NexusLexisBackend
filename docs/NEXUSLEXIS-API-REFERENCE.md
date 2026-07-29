@@ -1,8 +1,8 @@
 ---
 Document Title:    Nexus Lexis — Complete API Reference
 Document ID:        NL-DOC-API-001
-Version:            1.0
-Last Updated:       2026-07-28
+Version:            1.1
+Last Updated:       2026-07-29
 Classification:     Internal — Technical Reference
 Owner:              Nexus Lexis Engineering
 Applies To:         Main API · Auth API · LEX AI · External consumers (mainsite)
@@ -24,6 +24,15 @@ This document catalogs **every HTTP and WebSocket API** exposed by the Nexus Lex
 - Source file where the route is defined
 - Proxy relationships between services
 - Intended consumer (external **mainsite** frontend — not in this repo)
+
+**Production base URLs (Vercel):**
+
+| Service | Base URL |
+|---------|----------|
+| Main API | `https://nexus-lexis-backend-ql8w.vercel.app` |
+| Auth API | `https://nexus-lexis-backend-45v4.vercel.app` |
+| Auth (via proxy) | `https://nexus-lexis-backend-ql8w.vercel.app/api/auth` |
+| LEX AI (proxied) | `https://nexus-lexis-backend-ql8w.vercel.app/api/v1/lex` |
 
 **Default base URLs (development):**
 
@@ -312,16 +321,21 @@ Proxies to `http://localhost:8001`
 
 | Method | URL | Auth | Request body | Response | Purpose |
 |--------|-----|------|--------------|----------|---------|
-| POST | `/api/auth/register` | Public | `{ fullName, email, password, phone, role, verificationToken }` | `{ token, user }` | Register user (client/lawyer/ca) |
+| POST | `/api/auth/register` | Public | `{ fullName, email, password, phone, role, verificationToken }` | `{ accessToken, refreshToken, token, user }` | Register user (client/lawyer/ca) |
 | POST | `/api/auth/register/send-otp` | Public | `{ email }` | `{ ok, message, expiresInMinutes }` | Send signup OTP email |
 | POST | `/api/auth/register/verify-otp` | Public | `{ email, code }` | `{ ok, verificationToken }` | Verify OTP code |
 | POST | `/api/auth/register/validate` | Public | `{ email }` | `{ valid, available }` | Check email availability |
-| POST | `/api/auth/login` | Public | `{ email, password }` | `{ token, user }` | Email/password login |
+| POST | `/api/auth/login` | Public | `{ email, password }` | `{ accessToken, refreshToken, token, user }` | Email/password login |
+| POST | `/api/auth/refresh` | Public | `{ refreshToken }` | `{ accessToken, refreshToken, token, user }` | Rotate refresh token → new access token |
+| POST | `/api/auth/logout` | Public | `{ refreshToken }` | `{ ok, message }` | Revoke refresh token |
+| POST | `/api/auth/forgot-password` | Public | `{ email }` | `{ ok, message }` | Send password reset OTP email |
+| POST | `/api/auth/forgot-password/verify-otp` | Public | `{ email, code }` | `{ ok, resetToken }` | Verify reset OTP |
+| POST | `/api/auth/reset-password` | Public | `{ email, resetToken, password }` | `{ ok, message }` | Set new password |
 | GET | `/api/auth/me` | JWT | — | `{ user }` | Current user + profile |
 | GET | `/api/auth/roles` | Public | — | `{ registerRoles, allRoles }` | Available roles |
 | GET | `/api/auth/google/url` | Public | `?state=login` | `{ url }` | Google OAuth URL |
 | GET | `/api/auth/google/callback` | Public | `?code&state` | Redirect to frontend with token | OAuth callback |
-| POST | `/api/auth/google/token` | Public | `{ idToken \| credential, role }` | `{ token, user }` | Google ID token login |
+| POST | `/api/auth/google/token` | Public | `{ idToken \| credential, role }` | `{ accessToken, refreshToken, token, user }` | Google ID token login |
 
 **Used by:** Mainsite Login, SignUp, AuthContext (`authService.js` in external frontend)
 

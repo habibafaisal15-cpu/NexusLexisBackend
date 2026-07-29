@@ -79,24 +79,32 @@ def build_document() -> Document:
     r.font.size = Pt(16)
 
     doc.add_paragraph()
-    intro = """Main API Base URL: http://localhost:3000
+    intro = """Production URLs:
+Main API: https://nexus-lexis-backend-ql8w.vercel.app
+Auth API: https://nexus-lexis-backend-45v4.vercel.app/api/auth
+  (Auth also proxied: https://nexus-lexis-backend-ql8w.vercel.app/api/auth/*)
+LEX AI: deploy on Render (set LEX_API_URL on Main API when ready)
+
+Development URLs:
+Main API Base URL: http://localhost:3000
 Auth API Base URL: http://localhost:3001
   (All Auth routes also available via proxy: http://localhost:3000/api/auth/*)
 LEX AI Base URL: http://localhost:8001
   (LEX routes also proxied: http://localhost:3000/api/v1/lex/*)
 
 Stack: Node.js + Express + PostgreSQL + Django (LEX AI) + JWT + WebSocket
-All protected routes need header: Authorization: Bearer <token>
+All protected routes need header: Authorization: Bearer <accessToken>
 Optional dev headers (Main API): X-Client-Role, X-Workspace-Context, ngrok-skip-browser-warning
 
 Roles: client | lawyer | ca | admin
 (JWT may also use labels: CorporateClient | LegalAdvocate | CharteredAccountant | Admin)
 
-Typical auth success: { token, user } or { profile, token }
+Typical auth success: { accessToken, refreshToken, token, user } or { profile, token }
+token is alias for accessToken (backward compatible)
 Typical error: { error: "message" } or { ok: false, code, error }
 OTP endpoints return: { ok, message, expiresInMinutes } or { ok, verificationToken }
 
-Database: nexuslexis (PostgreSQL)
+Database: Neon PostgreSQL (production) / nexuslexis (local dev)
 LEX AI local DB: lex_backend/db.sqlite3 (SQLite, dev)
 
 Mainsite signup flow:
@@ -105,6 +113,11 @@ Mainsite signup flow:
 3. POST /api/auth/register with verificationToken + profile fields
 4. PUT /api/auth/profile/client to complete client profile
 5. POST /api/auth/profile/switch-role to open role dashboard
+
+Forgot password flow:
+1. POST /api/auth/forgot-password
+2. POST /api/auth/forgot-password/verify-otp → resetToken
+3. POST /api/auth/reset-password
 
 Source files: server.js · auth_backend/routes/*.js · routes/*.js · lex_backend/lex_ai/"""
     for line in intro.split("\n"):
@@ -143,13 +156,43 @@ Source files: server.js · auth_backend/routes/*.js · routes/*.js · lex_backen
         doc, "POST", "/api/auth/register", auth="No auth",
         headers="Content-Type: application/json",
         body='Body (JSON):\n{\n  "fullName": "Ali Khan",\n  "email": "ali@example.com",\n  "password": "secret123",\n  "phone": "03001234567",\n  "role": "client",\n  "verificationToken": "<from verify-otp>"\n}',
-        note="Creates account. Returns { token, user }. role defaults to client.",
+        note="Creates account. Returns { accessToken, refreshToken, token, user }.",
     )
     endpoint(
         doc, "POST", "/api/auth/login", auth="No auth",
         headers="Content-Type: application/json",
         body='Body (JSON):\n{\n  "email": "ali@example.com",\n  "password": "secret123"\n}',
-        note="Returns { token, user } with profile bundle when dashboard user exists.",
+        note="Returns { accessToken, refreshToken, token, expiresIn, refreshExpiresAt, user }.",
+    )
+    endpoint(
+        doc, "POST", "/api/auth/refresh", auth="No auth",
+        headers="Content-Type: application/json",
+        body='Body (JSON):\n{\n  "refreshToken": "<opaque refresh token from login>"\n}',
+        note="Issues new accessToken + refreshToken (rotation). Use when access token expires (401).",
+    )
+    endpoint(
+        doc, "POST", "/api/auth/logout", auth="No auth",
+        headers="Content-Type: application/json",
+        body='Body (JSON):\n{\n  "refreshToken": "<opaque refresh token>"\n}',
+        note="Revokes refresh token. Returns { ok: true, message }.",
+    )
+    endpoint(
+        doc, "POST", "/api/auth/forgot-password", auth="No auth",
+        headers="Content-Type: application/json",
+        body='Body (JSON):\n{\n  "email": "ali@example.com"\n}',
+        note="Sends 6-digit reset OTP email (10 min). Always returns generic success message (no email enumeration).",
+    )
+    endpoint(
+        doc, "POST", "/api/auth/forgot-password/verify-otp", auth="No auth",
+        headers="Content-Type: application/json",
+        body='Body (JSON):\n{\n  "email": "ali@example.com",\n  "code": "482915"\n}',
+        note='Alias: "otp" for code. Returns { ok, resetToken }.',
+    )
+    endpoint(
+        doc, "POST", "/api/auth/reset-password", auth="No auth",
+        headers="Content-Type: application/json",
+        body='Body (JSON):\n{\n  "email": "ali@example.com",\n  "resetToken": "<from verify-otp>",\n  "password": "newsecret123"\n}',
+        note='Alias: "newPassword" for password. Google-only accounts cannot reset password.',
     )
     endpoint(
         doc, "GET", "/api/auth/me", auth="Bearer JWT required",
@@ -168,13 +211,13 @@ Source files: server.js · auth_backend/routes/*.js · routes/*.js · lex_backen
     endpoint(
         doc, "GET", "/api/auth/google/callback", auth="No auth",
         query="?code=<auth_code>&state=login",
-        note="OAuth callback. Redirects to frontend /login?token=...",
+        note="OAuth callback. Redirects to frontend /login?token=...&refreshToken=...",
     )
     endpoint(
         doc, "POST", "/api/auth/google/token", auth="No auth",
         headers="Content-Type: application/json",
         body='Body (JSON):\n{\n  "idToken": "<google credential>",\n  "role": "client"\n}',
-        note='Accepts "credential" alias for idToken. Returns { token, user }.',
+        note='Accepts "credential" alias for idToken. Returns { accessToken, refreshToken, token, user }.',
     )
 
     # ── 2. Profile /api/auth/profile ─────────────────────────────────────────
@@ -453,7 +496,11 @@ Source files: server.js · auth_backend/routes/*.js · routes/*.js · lex_backen
 
 Example login success:
 {
+  "accessToken": "eyJhbGciOi...",
+  "refreshToken": "a1b2c3d4...",
   "token": "eyJhbGciOi...",
+  "expiresIn": "24h",
+  "refreshExpiresAt": "2026-08-28T...",
   "user": {
     "id": 1,
     "name": "Ali Khan",
@@ -462,6 +509,22 @@ Example login success:
     "roles": ["CorporateClient"],
     "profile": { "profileCompleted": true, ... }
   }
+}
+
+Example refresh success:
+{
+  "accessToken": "eyJnew...",
+  "refreshToken": "newopaque...",
+  "token": "eyJnew...",
+  "user": { ... }
+}
+
+Example forgot-password verify success:
+{
+  "ok": true,
+  "email": "ali@example.com",
+  "resetToken": "f8e9d7...",
+  "message": "Reset code verified. You can now set a new password."
 }
 
 Example OTP verify success:
