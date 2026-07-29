@@ -1,4 +1,4 @@
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import bcrypt from 'bcryptjs';
@@ -7,12 +7,23 @@ import { syncToDashboardUser } from './userSync.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+function resolveSchemaSql() {
+  const monorepoSchema = join(__dirname, '..', '..', 'db', 'full_schema.sql');
+  if (existsSync(monorepoSchema)) {
+    return readFileSync(monorepoSchema, 'utf-8');
+  }
+
+  const authSchema = join(__dirname, 'schema.sql');
+  const otpSchema = join(__dirname, 'otpSchema.sql');
+  const profileSchema = join(__dirname, 'profileSchema.sql');
+  return [authSchema, otpSchema, profileSchema]
+    .filter((path) => existsSync(path))
+    .map((path) => readFileSync(path, 'utf-8'))
+    .join('\n');
+}
+
 export async function runSchema() {
-  const fullSchema = readFileSync(
-    join(__dirname, '..', '..', 'db', 'full_schema.sql'),
-    'utf-8'
-  );
-  await pool.query(fullSchema);
+  await pool.query(resolveSchemaSql());
 }
 
 const DEMO_USERS = [

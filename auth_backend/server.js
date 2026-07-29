@@ -32,12 +32,15 @@ async function initDatabase() {
   await seedDemoUsers();
 }
 
-const IS_VERCEL = process.env.VERCEL === '1';
+const IS_VERCEL = Boolean(process.env.VERCEL);
 
-if (!IS_VERCEL || process.env.RUN_STARTUP_DB === 'true') {
-  await initDatabase();
-} else {
-  console.log('[startup] Skipping DB init on Vercel (run db:migrate separately)');
+if (!IS_VERCEL) {
+  initDatabase()
+    .then(() => startLocalServer())
+    .catch((err) => {
+      console.error('Failed to start auth server:', err);
+      process.exit(1);
+    });
 }
 
 app.get('/', (_req, res) => {
@@ -99,10 +102,6 @@ async function startLocalServer() {
       console.warn('[signup-otp] No email provider configured — set MS365_* in .env for real OTP delivery');
     }
   });
-}
-
-if (!IS_VERCEL) {
-  startLocalServer();
 }
 
 export default app;
