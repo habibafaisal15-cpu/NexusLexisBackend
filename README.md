@@ -79,11 +79,11 @@ Health checks:
 
 ### Frontend env (after deploy)
 ```env
-VITE_API_BASE_URL=https://nexuslexis-api.vercel.app/api/v2
-VITE_AUTH_API_URL=https://nexuslexis-auth.vercel.app/api/auth
-VITE_LEX_API_BASE_URL=https://nexuslexis-api.vercel.app/api/v1/lex
+VITE_API_BASE_URL=https://nexus-lexis-backend-ql8w.vercel.app/api/v2
+VITE_AUTH_API_URL=https://nexus-lexis-backend-45v4.vercel.app/api/auth
+VITE_LEX_API_BASE_URL=https://nexus-lexis-backend-ql8w.vercel.app/api/v1/lex
 ```
-(WebSocket is not supported on Vercel — frontend should use REST `/api/v1/lex/chat/`)
+(See also `env.frontend.production.example` in repo root.)
 
 ---
 
@@ -124,16 +124,17 @@ AI fallback (custom questions) needs a reachable `LLM_BASE_URL`.
 
 ---
 
-## Production URL map (example)
+## Production URL map
 
 | What | URL |
 |------|-----|
-| Main API base | `https://nexuslexis-api.vercel.app` |
-| Auth API base | `https://nexuslexis-auth.vercel.app` |
-| LEX (direct) | `https://nexuslexis-lex.onrender.com` |
-| Frontend calls Main | `https://nexuslexis-api.vercel.app/api/v2` |
-| Frontend calls Auth | `https://nexuslexis-auth.vercel.app/api/auth` |
-| Frontend calls LEX | `https://nexuslexis-api.vercel.app/api/v1/lex` (proxied) |
+| Main API base | `https://nexus-lexis-backend-ql8w.vercel.app` |
+| Auth API base | `https://nexus-lexis-backend-45v4.vercel.app` |
+| Google OAuth callback | `https://nexus-lexis-backend-45v4.vercel.app/api/auth/google/callback` |
+| LEX (direct) | Set `LEX_API_URL` after Render deploy |
+| Frontend calls Main | `https://nexus-lexis-backend-ql8w.vercel.app/api/v2` |
+| Frontend calls Auth | `https://nexus-lexis-backend-45v4.vercel.app/api/auth` |
+| Frontend calls LEX | `https://nexus-lexis-backend-ql8w.vercel.app/api/v1/lex` (proxied) |
 
 ---
 
