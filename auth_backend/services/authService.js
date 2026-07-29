@@ -11,9 +11,9 @@ const REGISTER_ROLES = ['client', 'lawyer', 'ca'];
 const ALL_ROLES = ['client', 'lawyer', 'ca', 'admin'];
 
 const googleClient = new OAuth2Client(
-  process.env.GOOGLE_CLIENT_ID,
-  process.env.GOOGLE_CLIENT_SECRET,
-  process.env.GOOGLE_REDIRECT_URI
+  process.env.GOOGLE_CLIENT_ID?.trim(),
+  process.env.GOOGLE_CLIENT_SECRET?.trim(),
+  process.env.GOOGLE_REDIRECT_URI?.trim()
 );
 
 export async function findUserByEmail(email) {
