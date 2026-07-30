@@ -66,8 +66,22 @@ app.get('/', (_req, res) => {
   });
 });
 
-app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', service: 'NexusLexis Auth API', time: new Date().toISOString() });
+app.get('/api/health', async (req, res) => {
+  const payload = {
+    status: 'ok',
+    service: 'NexusLexis Auth API',
+    time: new Date().toISOString(),
+    emailConfigured: isEmailDeliveryConfigured(),
+  };
+
+  if (req.query.email === '1' || req.query.check === 'email') {
+    payload.email = await verifyEmailDelivery();
+    if (!payload.email.ok) {
+      payload.status = 'degraded';
+    }
+  }
+
+  res.json(payload);
 });
 
 app.use('/api/auth', authRoutes);
