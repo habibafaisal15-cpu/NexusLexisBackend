@@ -17,6 +17,8 @@ import { seedDatabase } from './db/seed.js';
 import * as repo from './db/repository.js';
 import * as authRepo from './db/auth.js';
 import { asyncHandler } from './shared/lib/asyncHandler.js';
+import { runLexChat } from './services/lex/lexPipeline.js';
+import { warmQuestionBank } from './services/lex/questionBank.js';
 
 dotenv.config();
 
@@ -25,6 +27,8 @@ const PORT = process.env.PORT || 3000;
 const LEX_API_URL = process.env.LEX_API_URL || 'http://127.0.0.1:8001';
 const AUTH_API_URL = process.env.AUTH_API_URL || 'http://127.0.0.1:3001';
 const IS_VERCEL = Boolean(process.env.VERCEL);
+/** inline = Gemini + sheet RAG on Main API (Vercel). proxy = separate Django LEX service. */
+const LEX_MODE = process.env.LEX_MODE || (process.env.GEMINI_API_KEY ? 'inline' : 'proxy');
 const UPLOADS_DIR = IS_VERCEL ? join('/tmp', 'uploads') : join(__dirname, 'uploads');
 
 try {
@@ -500,14 +504,24 @@ async function proxyToLexAi(req, res, djangoPath) {
 }
 
 app.post('/api/v1/lex/chat/', asyncHandler(async (req, res) => {
+  if (LEX_MODE === 'inline') {
+    const result = await runLexChat(req.body || {});
+    return res.json(result);
+  }
   await proxyToLexAi(req, res, '/api/v1/lex/chat/');
 }));
 
 app.get('/api/v1/lex/sessions/', asyncHandler(async (req, res) => {
+  if (LEX_MODE === 'inline') {
+    return res.json([]);
+  }
   await proxyToLexAi(req, res, '/api/v1/lex/sessions/');
 }));
 
 app.get('/api/v1/lex/sessions/:sessionKey/', asyncHandler(async (req, res) => {
+  if (LEX_MODE === 'inline') {
+    return res.json({ session_key: req.params.sessionKey, title: 'Chat', messages: [] });
+  }
   await proxyToLexAi(req, res, `/api/v1/lex/sessions/${req.params.sessionKey}/`);
 }));
 
@@ -579,6 +593,9 @@ if (!IS_VERCEL) {
       server.listen(PORT, () => {
         console.log(`NexusLexis Main API running on http://localhost:${PORT}`);
         console.log(`WebSocket available at ws://localhost:${PORT}/api/lex/ws`);
+        if (LEX_MODE === 'inline' && process.env.GEMINI_API_KEY) {
+          warmQuestionBank(process.env.GEMINI_API_KEY);
+        }
       });
     })
     .catch((err) => {
@@ -588,3 +605,8 @@ if (!IS_VERCEL) {
 }
 
 export default app;
+
+// Pre-load question bank on Vercel cold start (non-blocking)
+if (IS_VERCEL && LEX_MODE === 'inline' && process.env.GEMINI_API_KEY) {
+  warmQuestionBank(process.env.GEMINI_API_KEY);
+}
