@@ -8,6 +8,7 @@ import authRoutes from './routes/auth.js';
 import profileRoutes from './routes/profile.js';
 import adminRoutes from './routes/admin.js';
 import { isEmailDeliveryConfigured, verifyEmailDelivery } from './services/emailService.js';
+import { isSignupOtpSkipped } from './services/otpService.js';
 
 dotenv.config();
 
@@ -55,6 +56,7 @@ app.get('/', (_req, res) => {
       forgotPassword: 'POST /api/auth/forgot-password',
       resetPassword: 'POST /api/auth/reset-password',
       register: 'POST /api/auth/register',
+      config: 'GET /api/auth/config',
       me: 'GET /api/auth/me',
       profile: 'GET /api/auth/profile',
       profileClient: 'PUT /api/auth/profile/client',
@@ -72,6 +74,7 @@ app.get('/api/health', async (req, res) => {
     service: 'NexusLexis Auth API',
     time: new Date().toISOString(),
     emailConfigured: isEmailDeliveryConfigured(),
+    signupOtpSkipped: isSignupOtpSkipped(),
   };
 
   if (req.query.email === '1' || req.query.check === 'email') {

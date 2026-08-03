@@ -12,7 +12,7 @@ import { getProfileForUser } from '../services/profileService.js';
 import * as profileRepo from '../db/profileRepository.js';
 import { authMiddleware, buildTokenPayload, buildTokenPayloadFromBundle, toPublicUser } from '../middleware/auth.js';
 import { validateEmailForSignup } from '../utils/validation.js';
-import { requestSignupOtp, verifySignupOtp } from '../services/otpService.js';
+import { requestSignupOtp, verifySignupOtp, isSignupOtpSkipped } from '../services/otpService.js';
 import { buildAuthSession, refreshAuthSession, logoutRefreshToken } from '../services/tokenService.js';
 import {
   requestPasswordReset,
@@ -174,6 +174,19 @@ router.get('/me', authMiddleware, asyncHandler(async (req, res) => {
     }
   });
 }));
+
+router.get('/config', (_req, res) => {
+  res.json({
+    signupOtpRequired: !isSignupOtpSkipped(),
+    registerRoles: ['client', 'lawyer', 'ca'],
+    authMethods: ['email', 'google'],
+    productionUrls: {
+      authApi: process.env.AUTH_PUBLIC_URL || 'https://nexus-lexis-backend-45v4.vercel.app/api/auth',
+      mainApi: process.env.MAIN_PUBLIC_URL || 'https://nexus-lexis-backend-ql8w.vercel.app/api/v2',
+      lexApi: process.env.LEX_PUBLIC_URL || 'https://nexus-lexis-backend-ql8w.vercel.app/api/v1/lex',
+    },
+  });
+});
 
 router.get('/roles', (_req, res) => {
   res.json({

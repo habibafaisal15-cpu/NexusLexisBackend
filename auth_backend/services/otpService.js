@@ -135,7 +135,13 @@ export async function verifySignupOtp(email, code) {
   };
 }
 
+export function isSignupOtpSkipped() {
+  return process.env.SKIP_SIGNUP_OTP === 'true';
+}
+
 export async function assertEmailVerificationToken(email, token) {
+  if (isSignupOtpSkipped()) return true;
+
   const normalizedEmail = email?.toLowerCase().trim();
   const tokenValue = String(token || '').trim();
 

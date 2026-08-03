@@ -4,7 +4,7 @@ import { pool, query } from '../db/index.js';
 import { syncToDashboardUser } from '../db/userSync.js';
 import { buildTokenPayload, toPublicUser } from '../middleware/auth.js';
 import { validateEmailForSignup } from '../utils/validation.js';
-import { assertEmailVerificationToken } from './otpService.js';
+import { assertEmailVerificationToken, isSignupOtpSkipped } from './otpService.js';
 import { notifyNewUser } from '../utils/notifyNewUser.js';
 
 const REGISTER_ROLES = ['client', 'lawyer', 'ca'];
