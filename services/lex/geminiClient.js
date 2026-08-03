@@ -1,7 +1,7 @@
 export async function geminiChatCompletion(messages, { system, maxTokens = 400, model, apiKey, timeoutMs = 60000 }) {
   if (!apiKey) throw new Error('GEMINI_API_KEY is not set');
 
-  const modelId = model || 'gemini-2.5-flash';
+  const modelId = model || 'gemini-3.1-flash-lite';
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent`;
 
   const contents = messages.map((msg) => ({
