@@ -70,8 +70,16 @@ export function isDisposableEmail(email) {
 async function domainAcceptsMail(domain) {
   let resolverUnavailable = false;
 
+  const withTimeout = (promise, ms = 3000) =>
+    Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        setTimeout(() => reject(Object.assign(new Error('DNS timeout'), { code: 'ETIMEOUT' })), ms);
+      }),
+    ]);
+
   try {
-    const mxRecords = await dns.resolveMx(domain);
+    const mxRecords = await withTimeout(dns.resolveMx(domain));
     if (mxRecords?.length > 0) return { ok: true };
   } catch (err) {
     if (isDnsResolverError(err)) {
@@ -80,7 +88,7 @@ async function domainAcceptsMail(domain) {
   }
 
   try {
-    const addresses = await dns.resolve4(domain);
+    const addresses = await withTimeout(dns.resolve4(domain));
     if (addresses?.length > 0) return { ok: true };
   } catch (err) {
     if (isDnsResolverError(err)) {
@@ -120,7 +128,7 @@ export async function validateEmailForSignup(email, { checkMx = true } = {}) {
     };
   }
 
-  const skipMx = process.env.EMAIL_SKIP_MX_CHECK === 'true';
+  const skipMx = process.env.EMAIL_SKIP_MX_CHECK === 'true' || Boolean(process.env.VERCEL);
   if (checkMx && !skipMx) {
     const domain = getDomain(normalized);
     const domainCheck = await domainAcceptsMail(domain);

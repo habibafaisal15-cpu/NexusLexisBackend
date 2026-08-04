@@ -12,7 +12,7 @@ import { getProfileForUser } from '../services/profileService.js';
 import * as profileRepo from '../db/profileRepository.js';
 import { authMiddleware, buildTokenPayload, buildTokenPayloadFromBundle, toPublicUser } from '../middleware/auth.js';
 import { validateEmailForSignup } from '../utils/validation.js';
-import { requestSignupOtp, verifySignupOtp, isSignupOtpSkipped } from '../services/otpService.js';
+import { requestSignupOtp, verifySignupOtp, isSignupOtpSkipped, isPasswordResetOtpSkipped } from '../services/otpService.js';
 import { buildAuthSession, refreshAuthSession, logoutRefreshToken } from '../services/tokenService.js';
 import {
   requestPasswordReset,
@@ -178,6 +178,7 @@ router.get('/me', authMiddleware, asyncHandler(async (req, res) => {
 router.get('/config', (_req, res) => {
   res.json({
     signupOtpRequired: !isSignupOtpSkipped(),
+    passwordResetOtpRequired: !isPasswordResetOtpSkipped(),
     registerRoles: ['client', 'lawyer', 'ca'],
     authMethods: ['email', 'google'],
     productionUrls: {

@@ -101,44 +101,51 @@ export async function sendGraphMail({ to, subject, text, html }) {
   const token = await getGraphAccessToken();
   const sender = getSenderAddress();
 
-  const response = await fetch(
-    `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(sender)}/sendMail`,
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        message: {
-          subject,
-          from: {
-            emailAddress: {
-              name: 'Nexus Lexis',
-              address: sender,
-            },
-          },
-          body: {
-            contentType: 'HTML',
-            content: html || text.replace(/\n/g, '<br>'),
-          },
-          toRecipients: [{ emailAddress: { address: to } }],
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Number(process.env.EMAIL_SEND_TIMEOUT_MS || 8000));
+
+  try {
+    const response = await fetch(
+      `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(sender)}/sendMail`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
         },
-        saveToSentItems: true,
-      }),
+        body: JSON.stringify({
+          message: {
+            subject,
+            from: {
+              emailAddress: {
+                name: 'Nexus Lexis',
+                address: sender,
+              },
+            },
+            body: {
+              contentType: 'HTML',
+              content: html || text.replace(/\n/g, '<br>'),
+            },
+            toRecipients: [{ emailAddress: { address: to } }],
+          },
+          saveToSentItems: true,
+        }),
+        signal: controller.signal,
+      }
+    );
+
+    if (!response.ok && response.status !== 202) {
+      const detail = await response.text();
+      const err = new Error(explainGraphError(detail || response.statusText));
+      err.code = 'GRAPH_SEND_FAILED';
+      throw err;
     }
-  );
 
-  if (!response.ok && response.status !== 202) {
-    const detail = await response.text();
-    const err = new Error(explainGraphError(detail || response.statusText));
-    err.code = 'GRAPH_SEND_FAILED';
-    throw err;
+    console.log(`[graph-mail] Accepted send to ${to} (${response.status})`);
+    return { delivered: true, provider: 'microsoft-graph' };
+  } finally {
+    clearTimeout(timer);
   }
-
-  console.log(`[graph-mail] Accepted send to ${to} (${response.status})`);
-
-  return { delivered: true, provider: 'microsoft-graph' };
 }
 
 export { isGraphConfigured };

@@ -4,6 +4,7 @@ import { findUserByEmail } from './authService.js';
 import { validateEmailForSignup } from '../utils/validation.js';
 import * as resetRepo from '../db/passwordResetRepository.js';
 import { sendPasswordResetOtpEmail, isEmailDeliveryConfigured } from './emailService.js';
+import { isPasswordResetOtpSkipped } from './otpService.js';
 import { syncToDashboardUser } from '../db/userSync.js';
 import { revokeAllRefreshTokens } from '../db/refreshTokenRepository.js';
 
@@ -46,6 +47,18 @@ export async function requestPasswordReset(email) {
   }
 
   const record = await resetRepo.createPasswordResetOtp(normalizedEmail);
+
+  if (isPasswordResetOtpSkipped()) {
+    const verified = await resetRepo.markPasswordResetVerified(record.id);
+    return {
+      ok: true,
+      email: normalizedEmail,
+      resetToken: verified.reset_token,
+      message: 'Password reset token issued (email OTP skipped). Use resetToken with reset-password.',
+      expiresInMinutes: resetRepo.passwordResetLimits.OTP_TTL_MINUTES,
+      otpSkipped: true,
+    };
+  }
 
   try {
     await sendPasswordResetOtpEmail({

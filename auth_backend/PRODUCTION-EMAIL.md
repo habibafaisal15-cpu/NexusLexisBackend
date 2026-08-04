@@ -8,7 +8,7 @@ Long-term OTP delivery using **Application Mail.Send** (no refresh tokens, no SM
 
 ```
 Sign-up → auth_backend → Microsoft Graph (app credentials)
-                              → sends as noreply@nexuslexis.law
+                              → sends as contact@nexuslexis.law
                               → Gmail / any recipient
 ```
 
@@ -16,17 +16,11 @@ Sign-up → auth_backend → Microsoft Graph (app credentials)
 
 ## Part 1 — Microsoft admin (one-time)
 
-### 1. Create system mailbox
+### 1. Sender mailbox
 
-In [admin.microsoft.com](https://admin.microsoft.com) → **Users** → **Add user**:
+Production OTP emails are sent **from `contact@nexuslexis.law`** (official Nexus Lexis contact address).
 
-| Field | Value |
-|-------|--------|
-| Name | Nexus Lexis Mailer |
-| Email | **noreply@nexuslexis.law** |
-| Password | Strong random password (store in password manager) |
-| **MFA** | **Do not enable** (service account) |
-| License | Any mailbox license (Exchange Online) |
+Ensure this mailbox exists in Microsoft 365 and has an Exchange Online license. Graph `Mail.Send` (application) sends on behalf of this mailbox via `MS365_SENDER=contact@nexuslexis.law`.
 
 ### 2. Azure app permissions (already mostly done)
 
@@ -52,7 +46,7 @@ Subject: Enable outbound Graph/application mail — 550 5.7.708
 
 Outbound email sent via Microsoft Graph API (Application Mail.Send) from our
 Azure app (client ID 591c9f09-92bc-4d4e-828c-a82354599029) as
-noreply@nexuslexis.law fails when delivering to external recipients (Gmail).
+contact@nexuslexis.law fails when delivering to external recipients (Gmail).
 
 Error:
 550 5.7.708 Service unavailable. Access denied, traffic not accepted from this IP.
@@ -62,7 +56,7 @@ Please enable application/API outbound mail for our tenant or remove the
 IP block affecting Graph sendMail submissions.
 
 Domain: nexuslexis.law
-Sender: noreply@nexuslexis.law
+Sender: contact@nexuslexis.law
 ```
 
 Wait for Microsoft to confirm resolution before go-live.
@@ -118,7 +112,7 @@ EMAIL_PROVIDER=graph
 MS365_TENANT_ID=4dc5e429-4704-452e-8104-16e99619c70b
 MS365_CLIENT_ID=591c9f09-92bc-4d4e-828c-a82354599029
 MS365_CLIENT_SECRET=<rotate before production>
-MS365_SENDER=noreply@nexuslexis.law
+MS365_SENDER=contact@nexuslexis.law
 
 # Do NOT set in production:
 # MS365_REFRESH_TOKEN
@@ -158,12 +152,12 @@ Then test full sign-up on the live site.
 ## Checklist
 
 ```
-□ noreply@nexuslexis.law mailbox created (no MFA)
+□ contact@nexuslexis.law mailbox licensed and active
 □ Application Mail.Send granted + admin consent
 □ Microsoft ticket submitted for 550 5.7.708
 □ Microsoft confirms outbound Graph mail works
 □ SPF + DKIM + DMARC configured
-□ Production .env uses graph only + noreply@ sender
+□ Production .env uses graph only + contact@ sender
 □ test:email + test:email:send pass to external Gmail
 □ Live sign-up OTP tested
 ```
@@ -178,4 +172,4 @@ Then test full sign-up on the live site.
 | **Delegated Graph** (`setup:graph-mail`) | Temporary dev only |
 | **Application Graph** | Production (after ticket resolved) |
 
-When the ticket is resolved, reply **“Microsoft fixed mail”** and we will switch sender to `noreply@` and run final tests.
+When the ticket is resolved, reply **“Microsoft fixed mail”** and run final OTP tests to Gmail.

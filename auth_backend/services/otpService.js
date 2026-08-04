@@ -139,6 +139,10 @@ export function isSignupOtpSkipped() {
   return process.env.SKIP_SIGNUP_OTP === 'true';
 }
 
+export function isPasswordResetOtpSkipped() {
+  return process.env.SKIP_PASSWORD_RESET_OTP === 'true' || isSignupOtpSkipped();
+}
+
 export async function assertEmailVerificationToken(email, token) {
   if (isSignupOtpSkipped()) return true;
 

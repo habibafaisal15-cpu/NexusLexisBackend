@@ -8,7 +8,7 @@ import authRoutes from './routes/auth.js';
 import profileRoutes from './routes/profile.js';
 import adminRoutes from './routes/admin.js';
 import { isEmailDeliveryConfigured, verifyEmailDelivery } from './services/emailService.js';
-import { isSignupOtpSkipped } from './services/otpService.js';
+import { isSignupOtpSkipped, isPasswordResetOtpSkipped } from './services/otpService.js';
 
 dotenv.config();
 
@@ -75,6 +75,7 @@ app.get('/api/health', async (req, res) => {
     time: new Date().toISOString(),
     emailConfigured: isEmailDeliveryConfigured(),
     signupOtpSkipped: isSignupOtpSkipped(),
+    passwordResetOtpSkipped: isPasswordResetOtpSkipped(),
   };
 
   if (req.query.email === '1' || req.query.check === 'email') {
