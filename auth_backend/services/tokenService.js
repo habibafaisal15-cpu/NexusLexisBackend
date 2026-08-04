@@ -8,17 +8,29 @@ import {
 } from '../middleware/auth.js';
 import { formatProfileResponse } from './profileService.js';
 
+function useFastAuthSession() {
+  return process.env.FAST_AUTH_SESSION === 'true' || Boolean(process.env.VERCEL);
+}
+
+async function loadProfileBundle(userId) {
+  if (!userId || useFastAuthSession()) return null;
+  try {
+    return await profileRepo.getFullProfileBundle(userId);
+  } catch (err) {
+    console.warn('[auth-session] Profile bundle skipped:', err.message);
+    return null;
+  }
+}
+
 export async function buildAuthSession(authUser, dashboardUser = null) {
   const userId = dashboardUser?.id;
   let payload;
   let profile = null;
 
-  if (userId) {
-    const bundle = await profileRepo.getFullProfileBundle(userId);
-    if (bundle) {
-      payload = buildTokenPayloadFromBundle(authUser, bundle);
-      profile = formatProfileResponse(bundle, authUser);
-    }
+  const bundle = await loadProfileBundle(userId);
+  if (bundle) {
+    payload = buildTokenPayloadFromBundle(authUser, bundle);
+    profile = formatProfileResponse(bundle, authUser);
   }
 
   if (!payload) {
@@ -72,12 +84,10 @@ export async function refreshAuthSession(rawRefreshToken) {
   let profile = null;
   const userId = dashboardUser?.id;
 
-  if (userId) {
-    const bundle = await profileRepo.getFullProfileBundle(userId);
-    if (bundle) {
-      payload = buildTokenPayloadFromBundle(authUser, bundle);
-      profile = formatProfileResponse(bundle, authUser);
-    }
+  const bundle = await loadProfileBundle(userId);
+  if (bundle) {
+    payload = buildTokenPayloadFromBundle(authUser, bundle);
+    profile = formatProfileResponse(bundle, authUser);
   }
 
   if (!payload) {

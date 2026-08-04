@@ -19,6 +19,11 @@ function buildPoolConfig(maxConnections = 10) {
     config.ssl = { rejectUnauthorized: false };
   }
 
+  if (process.env.VERCEL) {
+    config.connectionTimeoutMillis = Number(process.env.DB_CONNECT_TIMEOUT_MS || 10000);
+    config.idleTimeoutMillis = 10000;
+  }
+
   return config;
 }
 
