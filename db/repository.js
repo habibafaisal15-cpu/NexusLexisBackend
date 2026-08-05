@@ -1,6 +1,6 @@
 import { query } from './index.js';
 
-const DEMO_CLIENT_EMAIL = process.env.DEMO_CLIENT_EMAIL || 'habibcorp@nexuslexis.law';
+const DEMO_CLIENT_EMAIL = process.env.DEMO_CLIENT_EMAIL || 'client@nexuslexis.law';
 
 const ORDER_STATUS_MAP = {
   pending_payment: 'Pending Payment',
@@ -277,7 +277,7 @@ export async function getLibraryTemplate(slug) {
 export async function getClientDocuments(clientId, { status } = {}) {
   let sql = `
     SELECT so.id, so.order_number, so.status, so.intake_form_data AS "formData",
-           so.expected_delivery, so.completed_file, so.milestone, so.created_at,
+           so.expected_delivery, so.completed_file, so.milestone,
            s.slug AS "templateId", s.name AS "templateName",
            sc.slug AS "categorySlug", sc.name AS "categoryName"
     FROM service_orders so
@@ -297,7 +297,7 @@ export async function getClientDocuments(clientId, { status } = {}) {
   const result = await query(sql, params);
   const documents = result.rows.map((row) => ({
     ...mapOrderRow(row),
-    createdAt: row.created_at,
+    createdAt: row.expected_delivery || null,
     hasDownload: Boolean(row.completed_file),
   }));
 

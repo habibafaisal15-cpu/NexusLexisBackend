@@ -51,8 +51,8 @@ export async function syncToDashboardUser(authUser, passwordHash = null, client 
     if (passwordHash) {
       await runQuery(
         client,
-        'UPDATE users SET password = $1, username = $2, phone = $3 WHERE id = $4',
-        [passwordHash, displayName, phone, dashboardUser.id]
+        'UPDATE users SET password = $1, phone = COALESCE($2, phone) WHERE id = $3',
+        [passwordHash, phone, dashboardUser.id]
       );
     } else {
       await runQuery(
@@ -67,9 +67,14 @@ export async function syncToDashboardUser(authUser, passwordHash = null, client 
   }
 
   const usernameCheck = await runQuery(client, 'SELECT id FROM users WHERE username = $1', [displayName]);
-  const username = usernameCheck.rows[0]
-    ? `${displayName} (${email.split('@')[0]})`
-    : displayName;
+  let username = displayName;
+  if (usernameCheck.rows[0]) {
+    username = `${displayName} (${email.split('@')[0]})`;
+    const again = await runQuery(client, 'SELECT id FROM users WHERE username = $1', [username]);
+    if (again.rows[0]) {
+      username = `${displayName} (${email})`;
+    }
+  }
 
   const result = await runQuery(
     client,

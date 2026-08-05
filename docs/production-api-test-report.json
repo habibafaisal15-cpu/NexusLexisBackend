@@ -1,0 +1,334 @@
+{
+  "testedAt": "2026-08-05T22:33:22.690Z",
+  "authBase": "https://nexus-lexis-backend-45v4.vercel.app/api/auth",
+  "mainBase": "https://nexus-lexis-backend-ql8w.vercel.app/api/v2",
+  "lexBase": "https://nexus-lexis-backend-ql8w.vercel.app/api/v1/lex",
+  "passed": 51,
+  "total": 54,
+  "results": [
+    {
+      "name": "Auth GET /api/health",
+      "ok": true,
+      "ms": 615,
+      "detail": ""
+    },
+    {
+      "name": "Auth GET /api/auth/config",
+      "ok": true,
+      "ms": 785,
+      "detail": "otpSkipped=true"
+    },
+    {
+      "name": "Auth GET /api/auth/roles",
+      "ok": true,
+      "ms": 348,
+      "detail": ""
+    },
+    {
+      "name": "Auth GET /api/auth/google/url",
+      "ok": true,
+      "ms": 331,
+      "detail": ""
+    },
+    {
+      "name": "Auth POST /register/validate",
+      "ok": true,
+      "ms": 458,
+      "detail": ""
+    },
+    {
+      "name": "Auth POST /register (client)",
+      "ok": true,
+      "ms": 10620,
+      "detail": "tokens+Approved"
+    },
+    {
+      "name": "Auth POST /register (lawyer)",
+      "ok": true,
+      "ms": 10827,
+      "detail": "nextStep=complete_lawyer_application"
+    },
+    {
+      "name": "Auth POST /register (ca)",
+      "ok": true,
+      "ms": 10837,
+      "detail": "nextStep=complete_ca_application"
+    },
+    {
+      "name": "Auth POST /login (demo client)",
+      "ok": true,
+      "ms": 735,
+      "detail": "Approved"
+    },
+    {
+      "name": "Auth POST /login (demo lawyer)",
+      "ok": true,
+      "ms": 563,
+      "detail": "Pending"
+    },
+    {
+      "name": "Auth POST /login (demo ca)",
+      "ok": true,
+      "ms": 551,
+      "detail": "Pending"
+    },
+    {
+      "name": "Auth POST /login (demo admin)",
+      "ok": true,
+      "ms": 495,
+      "detail": "Approved"
+    },
+    {
+      "name": "Auth GET /me",
+      "ok": true,
+      "ms": 471,
+      "detail": ""
+    },
+    {
+      "name": "Auth GET /profile",
+      "ok": true,
+      "ms": 478,
+      "detail": ""
+    },
+    {
+      "name": "Auth POST /refresh",
+      "ok": true,
+      "ms": 717,
+      "detail": ""
+    },
+    {
+      "name": "Auth POST /forgot-password",
+      "ok": true,
+      "ms": 410,
+      "detail": "resetToken returned"
+    },
+    {
+      "name": "Auth POST /reset-password",
+      "ok": false,
+      "ms": 510,
+      "detail": "duplicate key value violates unique constraint \"users_username_key\""
+    },
+    {
+      "name": "Auth GET /me (lawyer pending)",
+      "ok": true,
+      "ms": 586,
+      "detail": ""
+    },
+    {
+      "name": "Auth POST /profile/lawyer/apply",
+      "ok": true,
+      "ms": 663,
+      "detail": "Pending"
+    },
+    {
+      "name": "Auth POST /profile/ca/apply",
+      "ok": true,
+      "ms": 493,
+      "detail": "Pending"
+    },
+    {
+      "name": "Auth GET /admin/applications",
+      "ok": true,
+      "ms": 380,
+      "detail": "9 pending"
+    },
+    {
+      "name": "Main GET /api/health",
+      "ok": true,
+      "ms": 702,
+      "detail": ""
+    },
+    {
+      "name": "Main GET /",
+      "ok": true,
+      "ms": 1556,
+      "detail": ""
+    },
+    {
+      "name": "Main POST /auth/session (demo)",
+      "ok": false,
+      "ms": 345,
+      "detail": "Demo client not configured"
+    },
+    {
+      "name": "Main GET /lawyers/public",
+      "ok": true,
+      "ms": 322,
+      "detail": "0 lawyers"
+    },
+    {
+      "name": "Main GET /cas/public",
+      "ok": true,
+      "ms": 357,
+      "detail": ""
+    },
+    {
+      "name": "Main GET /library/catalog",
+      "ok": true,
+      "ms": 360,
+      "detail": "9 templates"
+    },
+    {
+      "name": "Main GET /library/templates/:slug",
+      "ok": true,
+      "ms": 356,
+      "detail": "moa"
+    },
+    {
+      "name": "Main GET /workspace",
+      "ok": true,
+      "ms": 473,
+      "detail": ""
+    },
+    {
+      "name": "Main GET /notifications",
+      "ok": true,
+      "ms": 342,
+      "detail": ""
+    },
+    {
+      "name": "Main GET /orders",
+      "ok": true,
+      "ms": 339,
+      "detail": ""
+    },
+    {
+      "name": "Main GET /appointments",
+      "ok": true,
+      "ms": 346,
+      "detail": ""
+    },
+    {
+      "name": "Main GET /subscription",
+      "ok": true,
+      "ms": 356,
+      "detail": ""
+    },
+    {
+      "name": "Main GET /documents",
+      "ok": false,
+      "ms": 331,
+      "detail": "column so.created_at does not exist"
+    },
+    {
+      "name": "Main GET /vlo/matters",
+      "ok": true,
+      "ms": 526,
+      "detail": ""
+    },
+    {
+      "name": "Main GET /invoices",
+      "ok": true,
+      "ms": 347,
+      "detail": ""
+    },
+    {
+      "name": "Main GET /lawyers",
+      "ok": true,
+      "ms": 340,
+      "detail": ""
+    },
+    {
+      "name": "Main GET /messages/threads",
+      "ok": true,
+      "ms": 359,
+      "detail": "unread=0"
+    },
+    {
+      "name": "Main GET /messages/unread-count",
+      "ok": true,
+      "ms": 348,
+      "detail": ""
+    },
+    {
+      "name": "Main GET /lawyer/dashboard",
+      "ok": true,
+      "ms": 432,
+      "detail": ""
+    },
+    {
+      "name": "Main GET /lawyer/appointments",
+      "ok": true,
+      "ms": 356,
+      "detail": ""
+    },
+    {
+      "name": "Main GET /lawyer/orders",
+      "ok": true,
+      "ms": 345,
+      "detail": ""
+    },
+    {
+      "name": "Main GET /lawyer/notifications",
+      "ok": true,
+      "ms": 358,
+      "detail": ""
+    },
+    {
+      "name": "Main GET /lawyer/subscription",
+      "ok": true,
+      "ms": 361,
+      "detail": ""
+    },
+    {
+      "name": "Main GET /lawyer/messages/threads",
+      "ok": true,
+      "ms": 340,
+      "detail": ""
+    },
+    {
+      "name": "Main GET /ca/dashboard",
+      "ok": true,
+      "ms": 405,
+      "detail": ""
+    },
+    {
+      "name": "Main GET /ca/appointments",
+      "ok": true,
+      "ms": 375,
+      "detail": ""
+    },
+    {
+      "name": "Main GET /ca/notifications",
+      "ok": true,
+      "ms": 649,
+      "detail": ""
+    },
+    {
+      "name": "Main GET /ca/subscription",
+      "ok": true,
+      "ms": 369,
+      "detail": ""
+    },
+    {
+      "name": "Main GET /ca/messages/threads",
+      "ok": true,
+      "ms": 340,
+      "detail": ""
+    },
+    {
+      "name": "LEX POST /chat (Hello)",
+      "ok": true,
+      "ms": 472,
+      "detail": ""
+    },
+    {
+      "name": "LEX POST /chat (off-topic)",
+      "ok": true,
+      "ms": 355,
+      "detail": ""
+    },
+    {
+      "name": "LEX POST /chat (law question)",
+      "ok": true,
+      "ms": 3002,
+      "detail": "2348 chars"
+    },
+    {
+      "name": "LEX GET /sessions",
+      "ok": true,
+      "ms": 333,
+      "detail": ""
+    }
+  ]
+}
