@@ -3,8 +3,14 @@ import { findUserByEmail } from './authService.js';
 import { signToken, buildTokenPayloadFromBundle } from '../middleware/auth.js';
 
 import * as repo from '../db/profileRepository.js';
+import { normalizeDocumentInput } from './verificationDocumentService.js';
 
 
+
+function docRef(value) {
+  if (value === undefined || value === null || value === '') return null;
+  return normalizeDocumentInput(value);
+}
 
 function normalizeClientBody(body) {
 
@@ -16,7 +22,7 @@ function normalizeClientBody(body) {
 
     city: body.city || null,
 
-    profilePhoto: body.profilePhoto || body.profile_photo || null,
+    profilePhoto: docRef(body.profilePhoto || body.profile_photo),
 
     documents: body.documents || {}
 
@@ -32,13 +38,13 @@ function normalizeLawyerBody(body, fullName) {
 
     fullName: body.fullName || fullName,
 
-    profilePhoto: body.profilePhoto || null,
+    profilePhoto: docRef(body.profilePhoto || body.documentRefs?.profilePhoto),
 
-    barCertificate: body.barCertificate || null,
+    barCertificate: docRef(body.barCertificate || body.documentRefs?.barCertificate),
 
-    cnicFront: body.cnicFront || null,
+    cnicFront: docRef(body.cnicFront || body.documentRefs?.cnicFront),
 
-    cnicBack: body.cnicBack || null,
+    cnicBack: docRef(body.cnicBack || body.documentRefs?.cnicBack),
 
     cnic: body.cnic || null,
 
@@ -76,13 +82,13 @@ function normalizeCABody(body, fullName) {
 
     fullName: body.fullName || fullName,
 
-    photo: body.photo || null,
+    photo: docRef(body.photo || body.profilePhoto || body.documentRefs?.photo),
 
-    caCertificate: body.caCertificate || null,
+    caCertificate: docRef(body.caCertificate || body.documentRefs?.caCertificate),
 
-    cnicFront: body.cnicFront || null,
+    cnicFront: docRef(body.cnicFront || body.documentRefs?.cnicFront),
 
-    cnicBack: body.cnicBack || null,
+    cnicBack: docRef(body.cnicBack || body.documentRefs?.cnicBack),
 
     cnic: body.cnic,
 

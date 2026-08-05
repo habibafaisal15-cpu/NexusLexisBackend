@@ -59,6 +59,18 @@ CREATE INDEX IF NOT EXISTS idx_password_reset_otps_email ON password_reset_otps 
 CREATE INDEX IF NOT EXISTS idx_password_reset_otps_token ON password_reset_otps (reset_token)
     WHERE reset_token IS NOT NULL;
 
+CREATE TABLE IF NOT EXISTS verification_uploads (
+    id UUID PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    doc_type VARCHAR(50) NOT NULL,
+    file_name VARCHAR(255),
+    mime_type VARCHAR(100) NOT NULL,
+    content_base64 TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_verification_uploads_user ON verification_uploads (user_id);
+
 -- Signup OTP PostgreSQL functions (required on Neon — see migrate_signup_otp_functions.sql)
 CREATE OR REPLACE FUNCTION generate_signup_temp_token()
 RETURNS VARCHAR(6)

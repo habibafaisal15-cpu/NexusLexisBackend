@@ -1,4 +1,5 @@
 import * as repo from '../db/profileRepository.js';
+import { resolveDocumentForAdmin } from './verificationDocumentService.js';
 
 function parseDocuments(raw) {
   if (!raw) return {};
@@ -14,6 +15,17 @@ function parseDocuments(raw) {
 
 function formatLawyerApplication(row) {
   const documents = parseDocuments(row.documents);
+
+  const docFields = {
+    profilePhoto: documents.profilePhoto || row.photo || null,
+    barCertificate: documents.barCertificate || null,
+    cnicFront: documents.cnicFront || null,
+    cnicBack: documents.cnicBack || null,
+  };
+
+  const resolvedDocuments = Object.fromEntries(
+    Object.entries(docFields).map(([key, value]) => [key, resolveDocumentForAdmin(value, key)])
+  );
 
   return {
     userId: row.user_id,
@@ -35,17 +47,23 @@ function formatLawyerApplication(row) {
     onlineFee: row.online_fee,
     inPersonFee: row.inperson_fee,
     consultationMode: row.consultation_mode,
-    documents: {
-      profilePhoto: documents.profilePhoto || row.photo || null,
-      barCertificate: documents.barCertificate || null,
-      cnicFront: documents.cnicFront || null,
-      cnicBack: documents.cnicBack || null,
-    },
+    documents: resolvedDocuments,
   };
 }
 
 function formatCAApplication(row) {
   const documents = parseDocuments(row.documents);
+
+  const docFields = {
+    photo: documents.photo || row.photo || null,
+    caCertificate: documents.caCertificate || null,
+    cnicFront: documents.cnicFront || null,
+    cnicBack: documents.cnicBack || null,
+  };
+
+  const resolvedDocuments = Object.fromEntries(
+    Object.entries(docFields).map(([key, value]) => [key, resolveDocumentForAdmin(value, key)])
+  );
 
   return {
     userId: row.user_id,
@@ -63,12 +81,7 @@ function formatCAApplication(row) {
     serviceAreas: row.service_areas,
     fees: row.fees,
     availability: row.availability,
-    documents: {
-      photo: documents.photo || row.photo || null,
-      caCertificate: documents.caCertificate || null,
-      cnicFront: documents.cnicFront || null,
-      cnicBack: documents.cnicBack || null,
-    },
+    documents: resolvedDocuments,
   };
 }
 

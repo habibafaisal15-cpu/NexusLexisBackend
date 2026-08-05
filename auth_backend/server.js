@@ -7,6 +7,7 @@ import { runSchema, seedDemoUsers } from './db/seed.js';
 import authRoutes from './routes/auth.js';
 import profileRoutes from './routes/profile.js';
 import adminRoutes from './routes/admin.js';
+import documentRoutes from './routes/documents.js';
 import { isEmailDeliveryConfigured, verifyEmailDelivery } from './services/emailService.js';
 import { isSignupOtpSkipped, isPasswordResetOtpSkipped } from './services/otpService.js';
 
@@ -62,6 +63,8 @@ app.get('/', (_req, res) => {
       profileClient: 'PUT /api/auth/profile/client',
       profileLawyer: 'POST /api/auth/profile/lawyer/apply',
       profileCA: 'POST /api/auth/profile/ca/apply',
+      uploadVerificationDoc: 'POST /api/auth/profile/documents/upload',
+      viewVerificationDoc: 'GET /api/auth/documents/:documentId',
       googleUrl: 'GET /api/auth/google/url',
       googleToken: 'POST /api/auth/google/token'
     }
@@ -90,6 +93,7 @@ app.get('/api/health', async (req, res) => {
 
 app.use('/api/auth', authRoutes);
 app.use('/api/auth/profile', profileRoutes);
+app.use('/api/auth/documents', documentRoutes);
 app.use('/api/auth/admin', adminRoutes);
 
 app.use((_req, res) => {

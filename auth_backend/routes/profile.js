@@ -24,6 +24,8 @@ import {
 
 import * as repo from '../db/profileRepository.js';
 import { asyncHandler } from '../../shared/lib/asyncHandler.js';
+import { verificationUpload } from './documents.js';
+import { uploadVerificationDocument } from '../services/verificationDocumentService.js';
 
 const router = Router();
 
@@ -114,6 +116,20 @@ router.post('/ca/apply', authMiddleware, asyncHandler(async (req, res) => {
   const token = issueTokenForProfile(authUser, bundle);
 
   res.json({ profile, token });
+
+}));
+
+
+
+router.post('/documents/upload', authMiddleware, verificationUpload.single('file'), asyncHandler(async (req, res) => {
+
+  const userId = getUserId(req);
+
+  const docType = req.body.docType || req.body.field || req.body.type;
+
+  const result = await uploadVerificationDocument(userId, req.file, docType);
+
+  res.status(201).json(result);
 
 }));
 

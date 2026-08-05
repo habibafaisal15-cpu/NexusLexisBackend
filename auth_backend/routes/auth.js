@@ -186,6 +186,15 @@ router.get('/config', (_req, res) => {
       mainApi: process.env.MAIN_PUBLIC_URL || 'https://nexus-lexis-backend-ql8w.vercel.app/api/v2',
       lexApi: process.env.LEX_PUBLIC_URL || 'https://nexus-lexis-backend-ql8w.vercel.app/api/v1/lex',
     },
+    verificationDocuments: {
+      upload: 'POST /api/auth/profile/documents/upload',
+      view: 'GET /api/auth/documents/:documentId',
+      maxSizeMb: 3,
+      allowedDocTypes: {
+        lawyer: ['profilePhoto', 'barCertificate', 'cnicFront', 'cnicBack'],
+        ca: ['photo', 'caCertificate', 'cnicFront', 'cnicBack'],
+      },
+    },
   });
 });
 
