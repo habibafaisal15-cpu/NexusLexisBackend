@@ -714,7 +714,7 @@ export async function getCAApplicationForAdmin(userId) {
 
 
 
-function mapVerification(prof) {
+export function mapVerification(prof) {
 
   if (!prof) {
 
@@ -878,11 +878,15 @@ export async function getFullProfileBundle(userId) {
 
   } else if (activeRoleKey === 'lawyer') {
 
-    verificationStatus = lawyerVerification.status === 'None' ? 'Approved' : lawyerVerification.status;
+    verificationStatus = lawyerProfile
+      ? (lawyerVerification.status === 'None' ? 'Pending' : lawyerVerification.status)
+      : 'ApplicationRequired';
 
   } else if (activeRoleKey === 'ca') {
 
-    verificationStatus = caVerification.status === 'None' ? 'Approved' : caVerification.status;
+    verificationStatus = caProfile
+      ? (caVerification.status === 'None' ? 'Pending' : caVerification.status)
+      : 'ApplicationRequired';
 
   }
 

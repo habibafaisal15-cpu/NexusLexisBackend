@@ -85,27 +85,8 @@ export async function syncToDashboardUser(authUser, passwordHash = null, client 
     await initializeClientWorkspace(dashboardUser.id, dashboardUser.username, client);
   }
 
-  if (authUser.role === 'lawyer') {
-    await runQuery(
-      client,
-      `INSERT INTO lawyer_profiles (
-        user_id, full_name, cnic, bar_council_name, bar_council_num, verification_stat,
-        city, online_fee, inperson_fee
-      ) VALUES ($1, $2, 'PENDING', 'Pending Bar Council', 'PENDING', 'pending', 'Lahore', 0, 0)
-      ON CONFLICT (user_id) DO NOTHING`,
-      [dashboardUser.id, displayName]
-    );
-  }
-
-  if (authUser.role === 'ca') {
-    await runQuery(
-      client,
-      `INSERT INTO ca_profiles (user_id, full_name, cnic, qualification, fees, verification_stat)
-       VALUES ($1, $2, 'PENDING', 'Pending Qualification', 0, 'pending')
-       ON CONFLICT (user_id) DO NOTHING`,
-      [dashboardUser.id, displayName]
-    );
-  }
+  // Lawyer/CA professional profiles are created when the user submits the application form,
+  // not at signup (avoids duplicate placeholder CNIC constraint errors).
 
   return dashboardUser;
 }

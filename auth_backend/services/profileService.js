@@ -294,9 +294,9 @@ export async function applyLawyerProfile(userId, email, body) {
 
   if (!user) throw new Error('User not found');
 
-  if (user.role !== 'client' && user.role !== 'admin') {
+  if (user.role !== 'client' && user.role !== 'lawyer' && user.role !== 'admin') {
 
-    throw new Error('Only client accounts can apply for a lawyer profile');
+    throw new Error('Only client, lawyer, or admin accounts can apply for a lawyer profile');
 
   }
 
@@ -334,9 +334,9 @@ export async function applyCAProfile(userId, email, body) {
 
   if (!user) throw new Error('User not found');
 
-  if (user.role !== 'client' && user.role !== 'lawyer' && user.role !== 'admin') {
+  if (!['client', 'lawyer', 'ca', 'admin'].includes(user.role)) {
 
-    throw new Error('Only client or lawyer accounts can apply for a CA profile');
+    throw new Error('This account type cannot apply for a CA profile');
 
   }
 

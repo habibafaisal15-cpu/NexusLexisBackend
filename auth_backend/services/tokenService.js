@@ -7,6 +7,7 @@ import {
   toPublicUser,
 } from '../middleware/auth.js';
 import { formatProfileResponse } from './profileService.js';
+import { getAccountAccessMeta } from './accountAccess.js';
 
 function useFastAuthSession() {
   return process.env.FAST_AUTH_SESSION === 'true' || Boolean(process.env.VERCEL);
@@ -39,6 +40,7 @@ export async function buildAuthSession(authUser, dashboardUser = null) {
 
   const accessToken = signAccessToken(payload);
   const refresh = await refreshRepo.createRefreshToken(authUser.id);
+  const accountAccess = await getAccountAccessMeta(authUser, dashboardUser);
 
   return {
     accessToken,
@@ -51,7 +53,13 @@ export async function buildAuthSession(authUser, dashboardUser = null) {
       roles: payload.roles,
       dashboardUserId: userId || payload.userId,
       profile,
+      verificationStatus: accountAccess.verificationStatus,
+      canAccessDashboard: accountAccess.canAccessDashboard,
+      nextStep: accountAccess.nextStep,
+      pendingVerificationRole: accountAccess.pendingVerificationRole,
     },
+    accountAccess,
+    message: accountAccess.message || undefined,
   };
 }
 
@@ -95,6 +103,7 @@ export async function refreshAuthSession(rawRefreshToken) {
   }
 
   const accessToken = signAccessToken(payload);
+  const accountAccess = await getAccountAccessMeta(authUser, dashboardUser);
 
   return {
     accessToken,
@@ -107,7 +116,13 @@ export async function refreshAuthSession(rawRefreshToken) {
       roles: payload.roles,
       dashboardUserId: userId || payload.userId,
       profile,
+      verificationStatus: accountAccess.verificationStatus,
+      canAccessDashboard: accountAccess.canAccessDashboard,
+      nextStep: accountAccess.nextStep,
+      pendingVerificationRole: accountAccess.pendingVerificationRole,
     },
+    accountAccess,
+    message: accountAccess.message || undefined,
   };
 }
 
