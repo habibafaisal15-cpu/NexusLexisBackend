@@ -37,9 +37,41 @@ async function initializeClientWorkspace(userId, displayName, client = null) {
   );
 }
 
+async function isUsernameTaken(username, client = null, excludeUserId = null) {
+  const result = await runQuery(
+    client,
+    excludeUserId
+      ? 'SELECT id FROM users WHERE username = $1 AND id <> $2 LIMIT 1'
+      : 'SELECT id FROM users WHERE username = $1 LIMIT 1',
+    excludeUserId ? [username, excludeUserId] : [username]
+  );
+  return Boolean(result.rows[0]);
+}
+
+/** Always returns a username that is not used by another users row. */
+export async function allocateUniqueUsername(displayName, email, authUserId, client = null) {
+  const base = (displayName || email.split('@')[0] || 'User').trim();
+  const localPart = email.split('@')[0] || 'user';
+  const candidates = [
+    base,
+    `${base} (${localPart})`,
+    `${base} (${email})`,
+    `${base} (#${authUserId})`,
+    `user-${authUserId}`,
+  ];
+
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const taken = await isUsernameTaken(candidate, client);
+    if (!taken) return candidate;
+  }
+
+  return `user-${authUserId}-${Date.now()}`;
+}
+
 export async function syncToDashboardUser(authUser, passwordHash = null, client = null) {
   const email = authUser.email.toLowerCase().trim();
-  const displayName = authUser.full_name.trim();
+  const displayName = (authUser.full_name || email.split('@')[0] || 'User').trim();
   const phone = authUser.phone || null;
   let dashboardUser = await findDashboardUserByEmail(email, client);
 
@@ -54,11 +86,11 @@ export async function syncToDashboardUser(authUser, passwordHash = null, client 
         'UPDATE users SET password = $1, phone = COALESCE($2, phone) WHERE id = $3',
         [passwordHash, phone, dashboardUser.id]
       );
-    } else {
+    } else if (phone) {
       await runQuery(
         client,
-        'UPDATE users SET username = $1, phone = $2 WHERE id = $3',
-        [displayName, phone, dashboardUser.id]
+        'UPDATE users SET phone = $1 WHERE id = $2',
+        [phone, dashboardUser.id]
       );
     }
 
@@ -66,15 +98,7 @@ export async function syncToDashboardUser(authUser, passwordHash = null, client 
     return dashboardUser;
   }
 
-  const usernameCheck = await runQuery(client, 'SELECT id FROM users WHERE username = $1', [displayName]);
-  let username = displayName;
-  if (usernameCheck.rows[0]) {
-    username = `${displayName} (${email.split('@')[0]})`;
-    const again = await runQuery(client, 'SELECT id FROM users WHERE username = $1', [username]);
-    if (again.rows[0]) {
-      username = `${displayName} (${email})`;
-    }
-  }
+  const username = await allocateUniqueUsername(displayName, email, authUser.id, client);
 
   const result = await runQuery(
     client,
@@ -89,9 +113,6 @@ export async function syncToDashboardUser(authUser, passwordHash = null, client 
   if (authUser.role === 'client') {
     await initializeClientWorkspace(dashboardUser.id, dashboardUser.username, client);
   }
-
-  // Lawyer/CA professional profiles are created when the user submits the application form,
-  // not at signup (avoids duplicate placeholder CNIC constraint errors).
 
   return dashboardUser;
 }

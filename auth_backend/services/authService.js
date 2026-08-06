@@ -173,14 +173,27 @@ async function upsertGoogleUser({ googleId, email, fullName, defaultRole }) {
   }
 
   if (!user) {
-    const created = await query(
-      `INSERT INTO auth_users (full_name, email, role, auth_provider, google_id, password_hash)
-       VALUES ($1, $2, $3, 'google', $4, NULL)
-       RETURNING id, full_name, email, role, auth_provider, google_id, is_active`,
-      [fullName, email, defaultRole, googleId]
-    );
-    user = created.rows[0];
-    await notifyNewUser({ email, role: defaultRole, source: 'google' });
+    const db = await pool.connect();
+    try {
+      await db.query('BEGIN');
+      const created = await db.query(
+        `INSERT INTO auth_users (full_name, email, role, auth_provider, google_id, password_hash)
+         VALUES ($1, $2, $3, 'google', $4, NULL)
+         RETURNING id, full_name, email, role, auth_provider, google_id, is_active`,
+        [fullName, email, defaultRole, googleId]
+      );
+      user = created.rows[0];
+      await touchLastLogin(user.id);
+      const dashboardUser = await syncToDashboardUser(user, null, db);
+      await db.query('COMMIT');
+      await notifyNewUser({ email, role: defaultRole, source: 'google' });
+      return { authUser: user, dashboardUser };
+    } catch (err) {
+      await db.query('ROLLBACK');
+      throw err;
+    } finally {
+      db.release();
+    }
   } else if (!user.google_id) {
     const linked = await query(
       `UPDATE auth_users
