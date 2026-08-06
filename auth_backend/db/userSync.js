@@ -82,6 +82,11 @@ async function insertDashboardUser(authUser, passwordHash, client = null) {
 
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const username = await allocateUniqueUsername(displayName, email, authUser.id, client, attempt);
+    const savepoint = `sp_dashboard_user_${attempt}`;
+
+    if (client) {
+      await runQuery(client, `SAVEPOINT ${savepoint}`);
+    }
 
     try {
       const result = await runQuery(
@@ -91,8 +96,18 @@ async function insertDashboardUser(authUser, passwordHash, client = null) {
          RETURNING id, username, email, role, phone, is_active`,
         [username, email, passwordHash || '', authUser.role, phone]
       );
+
+      if (client) {
+        await runQuery(client, `RELEASE SAVEPOINT ${savepoint}`);
+      }
+
       return result.rows[0];
     } catch (err) {
+      if (client) {
+        await runQuery(client, `ROLLBACK TO SAVEPOINT ${savepoint}`);
+        await runQuery(client, `RELEASE SAVEPOINT ${savepoint}`);
+      }
+
       if (!isUniqueViolation(err)) throw err;
 
       const field = uniqueConstraintField(err);
