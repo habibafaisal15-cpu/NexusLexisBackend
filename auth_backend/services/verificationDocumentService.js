@@ -9,11 +9,37 @@ import {
 const MAX_BYTES = 3 * 1024 * 1024;
 const ALLOWED_MIME = new Set([
   'image/jpeg',
+  'image/jpg',
+  'image/pjpeg',
   'image/png',
   'image/webp',
   'image/gif',
   'application/pdf',
 ]);
+
+const EXT_TO_MIME = {
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+  '.pdf': 'application/pdf',
+};
+
+function resolveMimeType(file) {
+  const reported = (file.mimetype || '').toLowerCase().split(';')[0].trim();
+  if (reported && ALLOWED_MIME.has(reported)) {
+    return reported === 'image/jpg' || reported === 'image/pjpeg' ? 'image/jpeg' : reported;
+  }
+
+  const name = String(file.originalname || file.filename || '').toLowerCase();
+  const ext = name.includes('.') ? name.slice(name.lastIndexOf('.')) : '';
+  if (EXT_TO_MIME[ext]) {
+    return EXT_TO_MIME[ext];
+  }
+
+  return reported || 'application/octet-stream';
+}
 
 function authPublicBase() {
   return (process.env.AUTH_PUBLIC_URL || 'https://nexus-lexis-backend-45v4.vercel.app/api/auth').replace(/\/$/, '');
@@ -33,8 +59,9 @@ export async function uploadVerificationDocument(userId, file, docType) {
   if (file.size > MAX_BYTES) {
     throw new Error('File must be 3 MB or smaller');
   }
-  const mimeType = file.mimetype || 'application/octet-stream';
-  if (!ALLOWED_MIME.has(mimeType)) {
+  const mimeType = resolveMimeType(file);
+  const allowedOutput = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf']);
+  if (!allowedOutput.has(mimeType)) {
     throw new Error('File type not allowed. Use JPG, PNG, WEBP, GIF, or PDF');
   }
 
