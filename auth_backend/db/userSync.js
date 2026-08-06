@@ -1,4 +1,5 @@
-import { pool, query } from './index.js';
+import { query } from './index.js';
+import { isUniqueViolation, uniqueConstraintField } from '../../shared/lib/dbErrors.js';
 
 function runQuery(client, text, params) {
   return client ? client.query(text, params) : query(text, params);
@@ -49,7 +50,7 @@ async function isUsernameTaken(username, client = null, excludeUserId = null) {
 }
 
 /** Always returns a username that is not used by another users row. */
-export async function allocateUniqueUsername(displayName, email, authUserId, client = null) {
+export async function allocateUniqueUsername(displayName, email, authUserId, client = null, retryAttempt = 0) {
   const base = (displayName || email.split('@')[0] || 'User').trim();
   const localPart = email.split('@')[0] || 'user';
   const candidates = [
@@ -60,55 +61,96 @@ export async function allocateUniqueUsername(displayName, email, authUserId, cli
     `user-${authUserId}`,
   ];
 
+  if (retryAttempt > 0) {
+    candidates.unshift(`${base} (${localPart}-${retryAttempt})`);
+    candidates.unshift(`${base}-${retryAttempt}`);
+  }
+
   for (const candidate of candidates) {
     if (!candidate) continue;
     const taken = await isUsernameTaken(candidate, client);
     if (!taken) return candidate;
   }
 
-  return `user-${authUserId}-${Date.now()}`;
+  return `user-${authUserId}-${Date.now()}-${retryAttempt}`;
+}
+
+async function insertDashboardUser(authUser, passwordHash, client = null) {
+  const email = authUser.email.toLowerCase().trim();
+  const displayName = (authUser.full_name || email.split('@')[0] || 'User').trim();
+  const phone = authUser.phone || null;
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const username = await allocateUniqueUsername(displayName, email, authUser.id, client, attempt);
+
+    try {
+      const result = await runQuery(
+        client,
+        `INSERT INTO users (username, email, password, role, phone)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING id, username, email, role, phone, is_active`,
+        [username, email, passwordHash || '', authUser.role, phone]
+      );
+      return result.rows[0];
+    } catch (err) {
+      if (!isUniqueViolation(err)) throw err;
+
+      const field = uniqueConstraintField(err);
+      if (field === 'email') {
+        const existing = await findDashboardUserByEmail(email, client);
+        if (existing) return existing;
+      }
+      if (field === 'username' && attempt < 7) continue;
+
+      throw new Error('Could not complete signup. Please try again.');
+    }
+  }
+
+  throw new Error('Could not complete signup. Please try again.');
+}
+
+async function syncExistingDashboardUser(dashboardUser, authUser, passwordHash, client = null) {
+  if (!dashboardUser.is_active) {
+    throw new Error('This account has been deactivated');
+  }
+
+  const phone = authUser.phone || null;
+  const shouldUpgradeRole = dashboardUser.role === 'client'
+    && ['lawyer', 'ca'].includes(authUser.role);
+
+  if (passwordHash) {
+    await runQuery(
+      client,
+      `UPDATE users
+       SET password = $1,
+           phone = COALESCE($2, phone),
+           role = CASE WHEN $4 THEN $5 ELSE role END
+       WHERE id = $3`,
+      [passwordHash, phone, dashboardUser.id, shouldUpgradeRole, authUser.role]
+    );
+  } else if (phone || shouldUpgradeRole) {
+    await runQuery(
+      client,
+      `UPDATE users
+       SET phone = COALESCE($1, phone),
+           role = CASE WHEN $3 THEN $4 ELSE role END
+       WHERE id = $2`,
+      [phone, dashboardUser.id, shouldUpgradeRole, authUser.role]
+    );
+  }
+
+  return findDashboardUserByEmail(authUser.email.toLowerCase().trim(), client);
 }
 
 export async function syncToDashboardUser(authUser, passwordHash = null, client = null) {
   const email = authUser.email.toLowerCase().trim();
-  const displayName = (authUser.full_name || email.split('@')[0] || 'User').trim();
-  const phone = authUser.phone || null;
   let dashboardUser = await findDashboardUserByEmail(email, client);
 
   if (dashboardUser) {
-    if (!dashboardUser.is_active) {
-      throw new Error('This account has been deactivated');
-    }
-
-    if (passwordHash) {
-      await runQuery(
-        client,
-        'UPDATE users SET password = $1, phone = COALESCE($2, phone) WHERE id = $3',
-        [passwordHash, phone, dashboardUser.id]
-      );
-    } else if (phone) {
-      await runQuery(
-        client,
-        'UPDATE users SET phone = $1 WHERE id = $2',
-        [phone, dashboardUser.id]
-      );
-    }
-
-    dashboardUser = await findDashboardUserByEmail(email, client);
-    return dashboardUser;
+    return syncExistingDashboardUser(dashboardUser, authUser, passwordHash, client);
   }
 
-  const username = await allocateUniqueUsername(displayName, email, authUser.id, client);
-
-  const result = await runQuery(
-    client,
-    `INSERT INTO users (username, email, password, role, phone)
-     VALUES ($1, $2, $3, $4, $5)
-     RETURNING id, username, email, role, phone, is_active`,
-    [username, email, passwordHash || '', authUser.role, phone]
-  );
-
-  dashboardUser = result.rows[0];
+  dashboardUser = await insertDashboardUser(authUser, passwordHash, client);
 
   if (authUser.role === 'client') {
     await initializeClientWorkspace(dashboardUser.id, dashboardUser.username, client);

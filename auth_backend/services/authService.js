@@ -6,6 +6,7 @@ import { buildTokenPayload, toPublicUser } from '../middleware/auth.js';
 import { validateEmailForSignup } from '../utils/validation.js';
 import { assertEmailVerificationToken, isSignupOtpSkipped } from './otpService.js';
 import { notifyNewUser } from '../utils/notifyNewUser.js';
+import { isUniqueViolation } from '../../shared/lib/dbErrors.js';
 
 const REGISTER_ROLES = ['client', 'lawyer', 'ca'];
 const ALL_ROLES = ['client', 'lawyer', 'ca', 'admin'];
@@ -88,6 +89,9 @@ export async function registerUser({ fullName, email, password, phone, role = 'c
     return { authUser, dashboardUser };
   } catch (err) {
     await db.query('ROLLBACK');
+    if (isUniqueViolation(err)) {
+      throw new Error('An account with this email already exists');
+    }
     throw err;
   } finally {
     db.release();
@@ -157,13 +161,13 @@ export async function exchangeGoogleAuthCode(code, defaultRole = 'client') {
   });
 }
 
-async function upsertGoogleUser({ googleId, email, fullName, defaultRole }) {
+async function upsertGoogleUser({ googleId, email, fullName, defaultRole }, allowRetry = true) {
   if (!REGISTER_ROLES.includes(defaultRole)) {
     defaultRole = 'client';
   }
 
   let user = await query(
-    `SELECT id, full_name, email, role, auth_provider, google_id, is_active
+    `SELECT id, full_name, email, role, auth_provider, google_id, is_active, password_hash
      FROM auth_users WHERE google_id = $1 OR LOWER(email) = LOWER($2)`,
     [googleId, email]
   ).then((res) => res.rows[0] || null);
@@ -179,7 +183,7 @@ async function upsertGoogleUser({ googleId, email, fullName, defaultRole }) {
       const created = await db.query(
         `INSERT INTO auth_users (full_name, email, role, auth_provider, google_id, password_hash)
          VALUES ($1, $2, $3, 'google', $4, NULL)
-         RETURNING id, full_name, email, role, auth_provider, google_id, is_active`,
+         RETURNING id, full_name, email, role, auth_provider, google_id, is_active, password_hash`,
         [fullName, email, defaultRole, googleId]
       );
       user = created.rows[0];
@@ -190,6 +194,9 @@ async function upsertGoogleUser({ googleId, email, fullName, defaultRole }) {
       return { authUser: user, dashboardUser };
     } catch (err) {
       await db.query('ROLLBACK');
+      if (allowRetry && isUniqueViolation(err)) {
+        return upsertGoogleUser({ googleId, email, fullName, defaultRole }, false);
+      }
       throw err;
     } finally {
       db.release();

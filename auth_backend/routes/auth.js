@@ -20,8 +20,29 @@ import {
   resetPasswordWithToken,
 } from '../services/passwordResetService.js';
 import { asyncHandler } from '../../shared/lib/asyncHandler.js';
+import { isUniqueViolation, friendlyUniqueViolationMessage } from '../../shared/lib/dbErrors.js';
 
 const router = Router();
+
+function parseGoogleRoleFromState(state) {
+  const raw = String(state || '').trim();
+  if (!raw) return 'client';
+
+  if (raw.startsWith('signup:')) {
+    const role = raw.split(':')[1]?.toLowerCase();
+    if (['client', 'lawyer', 'ca'].includes(role)) return role;
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+    const role = String(parsed?.role || '').toLowerCase();
+    if (['client', 'lawyer', 'ca'].includes(role)) return role;
+  } catch {
+    // state is not JSON — fall through
+  }
+
+  return 'client';
+}
 
 async function sendAuthSuccess(res, result, status = 200) {
   const authUser = result.authUser || result;
@@ -216,7 +237,8 @@ router.get('/google/callback', asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'Missing Google authorization code' });
   }
 
-  const result = await exchangeGoogleAuthCode(String(code), 'client');
+  const roleFromState = parseGoogleRoleFromState(state);
+  const result = await exchangeGoogleAuthCode(String(code), roleFromState);
   const session = await buildAuthSession(result.authUser, result.dashboardUser);
   const frontend = (process.env.FRONTEND_URL || 'http://localhost:5175').trim();
   const redirectUrl = new URL('/login', frontend);
@@ -239,6 +261,10 @@ router.post('/google/token', asyncHandler(async (req, res) => {
 }));
 
 router.use((err, _req, res, _next) => {
+  if (isUniqueViolation(err)) {
+    return res.status(409).json({ error: friendlyUniqueViolationMessage(err) });
+  }
+
   const message = err.message || 'Authentication request failed';
   const status = message.includes('not configured') ? 503 : 400;
   res.status(status).json({ error: message });
