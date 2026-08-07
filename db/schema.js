@@ -2,6 +2,7 @@ import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { pool } from './index.js';
+import { ensureLibrarySchema } from './ensureLibrarySchema.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -32,4 +33,6 @@ export async function runSchema() {
         OR title ILIKE '%compliance reminder%'
       )
   `);
+
+  await ensureLibrarySchema();
 }

@@ -83,6 +83,32 @@ export function createAdminLibraryRouter() {
     res.status(201).json({ category });
   }));
 
+  router.get('/categories', asyncHandler(async (_req, res) => {
+    res.json({ categories: await repo.listLibraryCategories() });
+  }));
+
+  router.put('/categories/:idOrSlug', asyncHandler(async (req, res) => {
+    const category = await repo.updateLibraryCategory(req.params.idOrSlug, {
+      name: req.body.name,
+      slug: req.body.slug,
+      description: req.body.description,
+      icon: req.body.icon,
+      displayOrder: req.body.displayOrder,
+    });
+    if (!category) return res.status(404).json({ error: 'Category not found' });
+    res.json({ category });
+  }));
+
+  router.delete('/categories/:idOrSlug', asyncHandler(async (req, res) => {
+    try {
+      const ok = await repo.deleteLibraryCategory(req.params.idOrSlug);
+      if (!ok) return res.status(404).json({ error: 'Category not found' });
+      res.json({ ok: true });
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
+  }));
+
   router.post(
     '/templates',
     upload.single('file'),
@@ -99,6 +125,11 @@ export function createAdminLibraryRouter() {
         description: req.body.description,
         intakeSchema,
         accessType,
+        code: req.body.code,
+        block: req.body.block,
+        language: req.body.language || req.body.lang,
+        author: req.body.author || req.body.lawyer,
+        version: req.body.version,
         isActive: req.body.isActive !== 'false' && req.body.isActive !== false,
         file: filePayload(req.file),
       });
@@ -123,6 +154,11 @@ export function createAdminLibraryRouter() {
         accessType: req.body.accessType !== undefined || req.body.type !== undefined
           ? parseAccessType(req.body.accessType || req.body.type, 'paid')
           : undefined,
+        code: req.body.code,
+        block: req.body.block,
+        language: req.body.language || req.body.lang,
+        author: req.body.author || req.body.lawyer,
+        version: req.body.version,
         isActive: req.body.isActive,
         clearFile: req.body.clearFile === true || req.body.clearFile === 'true',
         file: filePayload(req.file),

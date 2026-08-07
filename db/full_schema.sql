@@ -223,7 +223,12 @@ CREATE TABLE IF NOT EXISTS services (
         CHECK (access_type IN ('public', 'paid')),
     template_file_name VARCHAR(255),
     template_mime_type VARCHAR(100),
-    template_content_base64 TEXT
+    template_content_base64 TEXT,
+    code VARCHAR(50),
+    block VARCHAR(100),
+    language VARCHAR(50) DEFAULT 'English',
+    author VARCHAR(255),
+    version VARCHAR(50) DEFAULT '1.0'
 );
 
 ALTER TABLE services ADD COLUMN IF NOT EXISTS description TEXT;
@@ -232,12 +237,22 @@ ALTER TABLE services ADD COLUMN IF NOT EXISTS access_type VARCHAR(20) NOT NULL D
 ALTER TABLE services ADD COLUMN IF NOT EXISTS template_file_name VARCHAR(255);
 ALTER TABLE services ADD COLUMN IF NOT EXISTS template_mime_type VARCHAR(100);
 ALTER TABLE services ADD COLUMN IF NOT EXISTS template_content_base64 TEXT;
+ALTER TABLE services ADD COLUMN IF NOT EXISTS code VARCHAR(50);
+ALTER TABLE services ADD COLUMN IF NOT EXISTS block VARCHAR(100);
+ALTER TABLE services ADD COLUMN IF NOT EXISTS language VARCHAR(50);
+ALTER TABLE services ADD COLUMN IF NOT EXISTS author VARCHAR(255);
+ALTER TABLE services ADD COLUMN IF NOT EXISTS version VARCHAR(50);
 
 UPDATE services SET access_type = 'paid' WHERE access_type IS NULL OR access_type = '';
+UPDATE services SET is_active = TRUE WHERE is_active IS NULL;
+UPDATE services SET language = COALESCE(NULLIF(language, ''), 'English');
+UPDATE services SET version = COALESCE(NULLIF(version, ''), '1.0');
 
 CREATE INDEX IF NOT EXISTS idx_services_schema_gin ON services USING GIN (intake_schema);
 CREATE INDEX IF NOT EXISTS idx_services_active ON services (is_active) WHERE is_active IS TRUE;
 CREATE INDEX IF NOT EXISTS idx_services_access_type ON services (access_type) WHERE is_active IS TRUE;
+CREATE INDEX IF NOT EXISTS idx_services_block ON services (block);
+CREATE INDEX IF NOT EXISTS idx_services_language ON services (language);
 
 CREATE TABLE IF NOT EXISTS service_orders (
     id BIGSERIAL PRIMARY KEY,

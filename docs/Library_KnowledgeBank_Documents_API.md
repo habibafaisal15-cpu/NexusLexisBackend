@@ -1,10 +1,10 @@
-# NexusLexis — Library, Knowledge Bank & My Documents
+# NexusLexis — Library, Knowledge Bank & My Documents (API Contract)
 
-**Document ID:** NL-DOC-LIB-001  
-**Version:** 1.0  
+**Document ID:** NL-DOC-LIB-002  
+**Version:** 2.0  
 **Updated:** 2026-08-07  
-**Audience:** Frontend / Admin UI  
-**Base URL (Main API):** `https://nexus-lexis-backend-ql8w.vercel.app/api/v2`
+**Replaces:** NL-DOC-LIB-001 (download-without-payment flow removed)  
+**Base URL:** `https://nexus-lexis-backend-ql8w.vercel.app/api/v2`
 
 ```env
 VITE_API_BASE_URL=https://nexus-lexis-backend-ql8w.vercel.app/api/v2
@@ -12,305 +12,190 @@ VITE_API_BASE_URL=https://nexus-lexis-backend-ql8w.vercel.app/api/v2
 
 ---
 
-## 1. Overview
+## 1. Product rules
 
-There are **two template types**:
+| Type | `accessType` | UI | Rules |
+|------|--------------|----|--------|
+| Public | `public` | Knowledge Bank | No login. Free device download. **Never** My Documents. |
+| Paid | `paid` | Client Library | Login → **Buy** → **Pay** → unlock in My Documents → download **only** from My Documents. |
 
-| Type | `accessType` | UI surface | Behavior |
-|------|--------------|------------|----------|
-| **Public** | `public` | Knowledge Bank | Free browse + download. Does **not** go to My Documents. |
-| **Paid** | `paid` | Client Library | Client download → saved to **My Documents**. Can also place a custom order. |
-
-Admin uploads templates once and sets `accessType`. Clients consume them from the matching catalog.
-
-```
-Admin uploads template (accessType)
-        │
-        ├── public ──► Knowledge Bank ──► free download
-        │
-        └── paid ────► Client Library
-                            │
-                            ▼
-              POST .../library/templates/:slug/download
-                            │
-                            ▼
-                      My Documents
-                   GET /documents
-```
+**Removed:** `POST /library/templates/:slug/download` no longer unlocks paid files without payment (returns `410`).
 
 ---
 
-## 2. Admin APIs (new)
+## 2. Target purchase flow (paid Library)
 
-**Auth:** Bearer token — role must be `admin`  
-Demo: `admin@nexuslexis.law` / `admin123`
+1. `GET /library/catalog` — show paid docs (`owned` when Bearer present).
+2. `POST /library/templates/:slug/purchase` — create pending purchase.
+3. `POST /library/purchases/:orderNumber/complete` — mark paid / unlock.
+4. `GET /documents` — purchased doc appears.
+5. `GET /documents/:orderNumber/download` — download file (completed only).
 
-### 2.1 List all templates (admin)
+Knowledge Bank stays: catalog → free `GET .../download` (no My Documents).
 
-```
-GET /admin/library/catalog
-GET /admin/library/catalog?accessType=public
-GET /admin/library/catalog?accessType=paid
-```
+---
 
-Includes inactive templates. Optional `accessType` filter.
+## 3. Response field contract (templates)
 
-### 2.2 Create category
+| FE need | API field(s) |
+|---------|----------------|
+| Route key | `id`, `slug` |
+| Title | `name`, `title` |
+| Code | `code` (e.g. `NL FAM 04`) |
+| Category filter | `category`, `categorySlug`, `categoryName` |
+| Block filter | `block` (e.g. Petitions / Notices / Agreements) |
+| Language filter | `lang`, `language` |
+| Price / Buy CTA | `price`, `priceLabel` (`0` / Free for public) |
+| Copy | `description` |
+| Attribution | `lawyer`, `author` |
+| Version | `version` |
+| Routing | `accessType` (`public` \| `paid`) |
+| File state | `hasTemplateFile` |
+| Ownership | `owned`, `ownedOrderNumber` |
+| Actions | `purchaseUrl`, `sampleDownloadUrl`, `downloadUrl` |
 
-```
-POST /admin/library/categories
-Content-Type: application/json
-```
+Catalog also returns:
 
 ```json
 {
-  "name": "Knowledge Bank",
-  "slug": "knowledge-bank",
-  "description": "Free public templates",
-  "icon": "book-open",
-  "displayOrder": 4
+  "accessType": "paid",
+  "categories": [...],
+  "templateCount": 9,
+  "filters": {
+    "categories": ["corporate-business", "..."],
+    "blocks": ["Agreements", "Notices", "Petitions"],
+    "languages": ["English"]
+  }
 }
 ```
 
-### 2.3 Create template (upload)
-
-```
-POST /admin/library/templates
-Content-Type: multipart/form-data
-```
-
-| Field | Required | Notes |
-|-------|----------|--------|
-| `name` | yes | Display name |
-| `accessType` | yes* | `public` or `paid` (*defaults to `paid`) |
-| `categorySlug` | yes* | e.g. `document-services` (*or `categoryId`) |
-| `price` | paid only | Must be `> 0` for paid; public forced to `0` |
-| `deliveryDays` | no | Default `7` |
-| `description` | no | |
-| `slug` | no | Auto-generated from name |
-| `intakeSchema` | no | JSON string |
-| `file` | no | PDF / DOC / DOCX / TXT / PNG / JPG (max 5MB) |
-
-**Public example**
-
-```
-name=Sample Affidavit Guide
-accessType=public
-categorySlug=knowledge-bank
-description=Free guide for Knowledge Bank
-file=<guide.pdf>
-```
-
-**Paid example**
-
-```
-name=NDA Agreement
-accessType=paid
-categorySlug=document-services
-price=15000
-deliveryDays=5
-description=Standard NDA for startups
-file=<nda.pdf>
-```
-
-**Response (201):** `{ "template": { id, name, slug, accessType, listing, price, ... } }`
-
-Template fields of note:
-
-| Field | Meaning |
-|-------|---------|
-| `accessType` | `public` \| `paid` |
-| `listing` | `knowledge_bank` \| `library` |
-| `isFree` / `isPaid` | Booleans |
-| `hasTemplateFile` | Admin uploaded a file |
-| `downloadUrl` | Client-facing download path (see below) |
-
-### 2.4 Update template
-
-```
-PUT /admin/library/templates/:idOrSlug
-Content-Type: multipart/form-data
-```
-
-Same fields as create (all optional). Use `clearFile=true` to remove attached file. Change `accessType` to move between Knowledge Bank and Library.
-
-### 2.5 Deactivate template
-
-```
-DELETE /admin/library/templates/:idOrSlug
-```
-
-Soft-deletes (`isActive=false`). Hidden from public/client catalogs.
+Query params on catalogs: `category`, `search`, `block`, `language` (or `lang`).
 
 ---
 
-## 3. Knowledge Bank APIs (public templates)
+## 4. My Documents field contract
 
-No auth required.
-
-| Method | Path | Purpose |
-|--------|------|---------|
-| GET | `/knowledge-bank/catalog` | List free templates (`accessType=public`) |
-| GET | `/knowledge-bank/templates/:slug` | Template detail |
-| GET | `/knowledge-bank/templates/:slug/download` | Download free file |
-
-Query on catalog: `?category=`, `?search=`
-
-**Note:** Knowledge Bank downloads are **not** written to My Documents.
+| FE need | API field(s) |
+|---------|----------------|
+| Key | `orderNumber` / `id` |
+| Title | `templateName`, `title` |
+| Status | `status`, `statusKey` (`pending_payment` \| `completed` \| …) |
+| Source | `source` = `library_purchase` (preferred) |
+| Dates | `purchasedAt`, `createdAt` |
+| Receipt | `price`, `totalPaid` |
+| Download | `hasDownload`, `downloadUrl` (only when completed + ready) |
+| Category | `category`, `categorySlug`, `categoryName` |
 
 ---
 
-## 4. Client Library APIs (paid templates)
+## 5. Public Knowledge Bank
 
-| Method | Path | Auth | Purpose |
-|--------|------|------|---------|
-| GET | `/library/catalog` | No | List **paid** templates only |
-| GET | `/library/templates/:slug` | No | Paid template detail |
-| GET | `/library/templates/:slug/sample` | No | Preview sample file (if uploaded) |
-| **POST** | `/library/templates/:slug/download` | **Client JWT** | **Download → save to My Documents** |
+| Method | Path | Auth |
+|--------|------|------|
+| GET | `/knowledge-bank/catalog` | No |
+| GET | `/knowledge-bank/templates/:slug` | No |
+| GET | `/knowledge-bank/templates/:slug/download` | No |
 
-### 4.1 Download paid template → My Documents (new)
+Returns **only** `accessType=public` and active templates.
 
+---
+
+## 6. Client Library (paid)
+
+| Method | Path | Auth |
+|--------|------|------|
+| GET | `/library/catalog` | Optional Bearer → sets `owned` |
+| GET | `/library/templates/:slug` | Optional Bearer |
+| GET | `/library/templates/:slug/sample` | No (preview only) |
+| **POST** | `/library/templates/:slug/purchase` | Client JWT |
+| **POST** | `/library/purchases/:orderNumber/complete` | Client JWT |
+| POST | `/library/coupons/validate` | No |
+| POST | `/library/templates/:slug/download` | **410 Gone** |
+
+### Purchase
+
+```http
+POST /library/templates/:slug/purchase
+Authorization: Bearer <client>
+{ "couponCode": "WELCOME10" }
 ```
-POST /library/templates/:slug/download
-Authorization: Bearer <client_access_token>
-```
 
-**Response (201)**
+Response highlights:
 
-```json
+- `paymentRequired: true` + `completeUrl`
+- or `alreadyOwned: true` + `downloadUrl` under My Documents
+- status stays `pending_payment` until complete
+
+### Complete payment (demo / webhook substitute)
+
+```http
+POST /library/purchases/:orderNumber/complete
+Authorization: Bearer <client>
 {
-  "ok": true,
-  "message": "Template downloaded and saved to My Documents",
-  "document": {
-    "orderNumber": "4821",
-    "templateId": "nda-agreement",
-    "templateName": "NDA Agreement",
-    "status": "Completed",
-    "statusKey": "completed",
-    "source": "library_download",
-    "downloadUrl": "/api/v2/documents/4821/download"
-  },
-  "downloadUrl": "/api/v2/documents/4821/download"
+  "paymentMethod": "demo",
+  "paymentReference": "optional-ref",
+  "couponCode": "WELCOME10"
 }
 ```
 
-| Case | Document status |
-|------|-----------------|
-| Template has an uploaded file | `Completed` — file ready via `downloadUrl` |
-| Template has no file | `Pending Payment` — still appears in My Documents |
+Unlocks document (`status=completed`, `source=library_purchase`).
 
-Catalog `downloadUrl` for paid items points at this POST endpoint.
+### Coupons (demo)
 
----
-
-## 5. My Documents APIs (changed behavior)
-
-| Method | Path | Auth | Purpose |
-|--------|------|------|---------|
-| GET | `/documents` | Client JWT | List client documents (orders + library downloads) |
-| GET | `/documents/:orderNumber` | Client JWT | Document detail |
-| GET | `/documents/:orderNumber/download` | Client JWT | Download file |
-
-**Changed:**  
-Documents now include library downloads (`source: "library_download"`).  
-If the document came from a library file, download serves the stored template file (not only disk uploads / plain-text fallback).
-
-Extra fields on document objects:
-
-| Field | Notes |
-|-------|--------|
-| `source` | `library_download` \| `order` |
-| `downloadUrl` | Present when file/status allows download |
-| `hasDownload` | On list items |
-
----
-
-## 6. Custom orders (existing, clarified)
-
-For custom drafting (intake form), still use:
-
-```
-POST /orders
-Authorization: Bearer <client_token>
+```http
+POST /library/coupons/validate
+{ "code": "WELCOME10", "templateSlug": "affidavit" }
 ```
 
-```json
-{
-  "templateId": "moa",
-  "templateName": "Memorandum of Association",
-  "formData": { "summary": "Need MOA for Pvt Ltd in Lahore" }
-}
-```
-
-- Only **paid** templates  
-- Public Knowledge Bank templates **cannot** be ordered (400)  
-- Created document appears in `GET /documents` with status `Pending Payment`
+Demo codes: `WELCOME10` (10%), `NEXUS20` (20%).
 
 ---
 
-## 7. Frontend integration checklist
+## 7. My Documents
 
-1. **Admin UI**
-   - Upload form includes `accessType` (`public` | `paid`)
-   - Paid requires `price > 0`
-   - Optional `file` attachment
+| Method | Path | Auth |
+|--------|------|------|
+| GET | `/documents` | Client JWT |
+| GET | `/documents/:orderNumber` | Client JWT |
+| GET | `/documents/:orderNumber/download` | Client JWT |
 
-2. **Knowledge Bank page**
-   - `GET /knowledge-bank/catalog`
-   - Download via `GET /knowledge-bank/templates/:slug/download`
-
-3. **Client Library page**
-   - `GET /library/catalog`
-   - On Download button: `POST /library/templates/:slug/download` with Bearer token
-   - Then refresh My Documents or navigate using returned `document`
-
-4. **My Documents page**
-   - `GET /documents`
-   - Re-download: `GET /documents/:orderNumber/download`
+Download of unpaid library purchases returns **402** with `completeUrl`.
 
 ---
 
-## 8. Env & auth reminder
+## 8. Admin APIs
 
-```env
-VITE_API_BASE_URL=https://nexus-lexis-backend-ql8w.vercel.app/api/v2
-VITE_AUTH_API_URL=https://nexus-lexis-backend-45v4.vercel.app/api/auth
-```
+Auth: admin Bearer.
 
-- Admin / client tokens come from Auth API login (`POST /api/auth/login`)
-- Main API accepts the same JWT (`Authorization: Bearer ...`)
+| Method | Path |
+|--------|------|
+| GET | `/admin/library/catalog` |
+| GET | `/admin/library/categories` |
+| POST | `/admin/library/categories` |
+| PUT | `/admin/library/categories/:idOrSlug` |
+| DELETE | `/admin/library/categories/:idOrSlug` |
+| POST | `/admin/library/templates` (multipart) |
+| PUT | `/admin/library/templates/:idOrSlug` |
+| DELETE | `/admin/library/templates/:idOrSlug` |
 
----
-
-## 9. Seeded examples
-
-After deploy/seed:
-
-- Existing corporate / property / document-services templates → **`paid`** (Client Library)
-- Sample Knowledge Bank entries (`kb-sample-affidavit`, `kb-nda-overview`) → **`public`**
+Template multipart fields: `name`, `accessType` (`public`|`paid`), `categorySlug`, `price`, `description`, `code`, `block`, `language`, `author`, `version`, `file`.
 
 ---
 
-## 10. API summary (added / changed)
+## 9. Acceptance checklist
 
-| Status | Method | Path |
-|--------|--------|------|
-| **Added** | GET | `/admin/library/catalog` |
-| **Added** | POST | `/admin/library/categories` |
-| **Added** | POST | `/admin/library/templates` |
-| **Added** | PUT | `/admin/library/templates/:idOrSlug` |
-| **Added** | DELETE | `/admin/library/templates/:idOrSlug` |
-| **Added** | GET | `/knowledge-bank/catalog` |
-| **Added** | GET | `/knowledge-bank/templates/:slug` |
-| **Added** | GET | `/knowledge-bank/templates/:slug/download` |
-| **Added** | POST | `/library/templates/:slug/download` |
-| **Changed** | GET | `/library/catalog` — returns **paid only** |
-| **Changed** | GET | `/library/templates/:slug` — **paid only** |
-| **Changed** | GET | `/documents` — includes library downloads |
-| **Changed** | GET | `/documents/:orderNumber/download` — serves library template files |
-| **Changed** | POST | `/orders` — rejects public templates; returns document-shaped payload |
+- [x] Schema columns migrated on Vercel cold start (`is_active`, `description`, `access_type`, `code`, `block`, `language`, …)
+- [x] `GET /knowledge-bank/catalog` → 200, public only
+- [x] `GET /library/catalog` → 200, paid only
+- [x] Detail/sample → 200/404 (not schema 500)
+- [x] Paid file cannot enter My Documents without payment complete
+- [x] Purchase + complete path exists
+- [x] `GET /documents` lists purchases; download when completed
+- [x] Catalog JSON includes section-3 fields + `owned`
+- [x] Admin upload with `accessType` works
 
 ---
 
-*Owner: NexusLexis Engineering · Internal frontend handoff*
+## 10. Custom drafting
+
+`POST /orders` custom intake remains available but is **out of scope** for this Library buy flow.

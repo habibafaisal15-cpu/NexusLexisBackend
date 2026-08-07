@@ -21,15 +21,24 @@ export async function seedLibraryCatalog() {
     for (const template of category.templates) {
       const accessType = template.accessType === 'public' ? 'public' : 'paid';
       await query(
-        `INSERT INTO services (category_id, name, slug, price, delivery_days, intake_schema, access_type)
-         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
+        `INSERT INTO services (
+           category_id, name, slug, price, delivery_days, intake_schema, access_type,
+           description, is_active, code, block, language, author, version
+         ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, TRUE, $9, $10, $11, $12, $13)
          ON CONFLICT (slug) DO UPDATE SET
            category_id = EXCLUDED.category_id,
            name = EXCLUDED.name,
            price = EXCLUDED.price,
            delivery_days = EXCLUDED.delivery_days,
            intake_schema = EXCLUDED.intake_schema,
-           access_type = COALESCE(services.access_type, EXCLUDED.access_type)`,
+           access_type = EXCLUDED.access_type,
+           description = COALESCE(EXCLUDED.description, services.description),
+           code = COALESCE(EXCLUDED.code, services.code),
+           block = COALESCE(EXCLUDED.block, services.block),
+           language = COALESCE(EXCLUDED.language, services.language),
+           author = COALESCE(EXCLUDED.author, services.author),
+           version = COALESCE(EXCLUDED.version, services.version),
+           is_active = TRUE`,
         [
           categoryId,
           template.name,
@@ -41,6 +50,12 @@ export async function seedLibraryCatalog() {
             category: category.name,
           }),
           accessType,
+          template.description || `${template.name} — ${category.name}`,
+          template.code || null,
+          template.block || null,
+          template.language || 'English',
+          template.author || 'NexusLexis',
+          template.version || '1.0',
         ]
       );
     }

@@ -82,3 +82,19 @@ export function adminMiddleware(req, res, next) {
   }
   return next();
 }
+
+/** Attach user if Bearer token is valid; never reject (for owned flags on public catalogs). */
+export function optionalAuthMiddleware(req, _res, next) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) {
+    return next();
+  }
+
+  try {
+    const decoded = jwt.verify(authHeader.slice(7), JWT_SECRET);
+    req.user = decoded;
+  } catch {
+    // ignore invalid token for optional auth
+  }
+  return next();
+}

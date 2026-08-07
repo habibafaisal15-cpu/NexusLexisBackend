@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 
-import { signToken, authMiddleware } from './middleware/auth.js';
+import { signToken, authMiddleware, optionalAuthMiddleware } from './middleware/auth.js';
 import { createLawyerRouter } from './routes/lawyerRoutes.js';
 import { createMessageRouter } from './routes/messageRoutes.js';
 import { createCaRouter } from './routes/caRoutes.js';
@@ -15,6 +15,7 @@ import { seedProfessionalDemoData } from './db/professionalSeed.js';
 import { testConnection } from './db/index.js';
 import { runSchema } from './db/schema.js';
 import { seedDatabase } from './db/seed.js';
+import { ensureLibrarySchema } from './db/ensureLibrarySchema.js';
 import * as repo from './db/repository.js';
 import * as authRepo from './db/auth.js';
 import { asyncHandler } from './shared/lib/asyncHandler.js';
@@ -61,10 +62,12 @@ app.get('/', (_req, res) => {
       catalog: 'GET /api/v2/library/catalog',
       template: 'GET /api/v2/library/templates/:slug',
       sample: 'GET /api/v2/library/templates/:slug/sample',
-      createOrder: 'POST /api/v2/orders',
-      libraryDownload: 'POST /api/v2/library/templates/:slug/download',
+      purchase: 'POST /api/v2/library/templates/:slug/purchase',
+      completePurchase: 'POST /api/v2/library/purchases/:orderNumber/complete',
+      validateCoupon: 'POST /api/v2/library/coupons/validate',
       knowledgeBank: 'GET /api/v2/knowledge-bank/catalog',
       knowledgeDownload: 'GET /api/v2/knowledge-bank/templates/:slug/download',
+      documents: 'GET /api/v2/documents',
       adminCreateTemplate: 'POST /api/v2/admin/library/templates',
     },
   });
@@ -83,6 +86,14 @@ app.use(cors({
 app.use(express.json());
 app.use('/uploads', express.static(UPLOADS_DIR));
 
+/** On Vercel, run library schema/seed once per cold start (local uses initDatabase). */
+app.use(asyncHandler(async (_req, _res, next) => {
+  if (IS_VERCEL) {
+    await ensureLibrarySchema();
+  }
+  next();
+}));
+
 const upload = multer({ dest: UPLOADS_DIR });
 
 function getClientId(req, res) {
@@ -91,6 +102,12 @@ function getClientId(req, res) {
     res.status(401).json({ error: 'Invalid or missing user session' });
     return null;
   }
+  return userId;
+}
+
+function optionalClientId(req) {
+  const userId = Number(req.user?.userId || req.user?.sub);
+  if (!userId || Number.isNaN(userId)) return null;
   return userId;
 }
 
@@ -229,13 +246,23 @@ app.delete('/api/v2/notifications', authMiddleware, asyncHandler(async (req, res
 
 // ─── Document Library (paid) + Knowledge Bank (public) ───────────────────────
 
-app.get('/api/v2/library/catalog', asyncHandler(async (req, res) => {
-  const { category, search } = req.query;
-  res.json(await repo.getLibraryCatalog({ category, search, accessType: 'paid' }));
+app.get('/api/v2/library/catalog', optionalAuthMiddleware, asyncHandler(async (req, res) => {
+  const { category, search, block, language, lang } = req.query;
+  res.json(await repo.getLibraryCatalog({
+    category,
+    search,
+    block,
+    language: language || lang,
+    accessType: 'paid',
+    clientId: optionalClientId(req),
+  }));
 }));
 
-app.get('/api/v2/library/templates/:slug', asyncHandler(async (req, res) => {
-  const template = await repo.getLibraryTemplate(req.params.slug, { accessType: 'paid' });
+app.get('/api/v2/library/templates/:slug', optionalAuthMiddleware, asyncHandler(async (req, res) => {
+  const template = await repo.getLibraryTemplate(req.params.slug, {
+    accessType: 'paid',
+    clientId: optionalClientId(req),
+  });
   if (!template) {
     return res.status(404).json({ error: 'Template not found' });
   }
@@ -253,29 +280,84 @@ app.get('/api/v2/library/templates/:slug/sample', asyncHandler(async (req, res) 
   res.send(buffer);
 }));
 
-/** Download paid library template → adds entry to My Documents */
-app.post('/api/v2/library/templates/:slug/download', authMiddleware, asyncHandler(async (req, res) => {
+/** Start buy — creates pending purchase. Does NOT unlock file. */
+app.post('/api/v2/library/templates/:slug/purchase', authMiddleware, asyncHandler(async (req, res) => {
   const clientId = await getClientId(req, res);
   if (!clientId) return;
 
   try {
-    const result = await repo.downloadLibraryTemplateToDocuments(clientId, req.params.slug);
-    res.status(201).json({
+    const result = await repo.purchaseLibraryTemplate(clientId, req.params.slug, {
+      couponCode: req.body?.couponCode,
+    });
+    res.status(result.alreadyOwned ? 200 : 201).json({
       ok: true,
-      message: result.hasFile
-        ? 'Template downloaded and saved to My Documents'
-        : 'Template added to My Documents',
+      alreadyOwned: result.alreadyOwned,
+      paymentRequired: result.paymentRequired,
+      purchase: result.purchase,
       document: result.document,
+      price: result.price,
+      totalPaid: result.totalPaid,
+      coupon: result.coupon || null,
+      completeUrl: result.completeUrl || null,
       downloadUrl: result.downloadUrl,
     });
   } catch (err) {
-    return res.status(400).json({ error: err.message || 'Could not download template' });
+    return res.status(400).json({ error: err.message || 'Could not start purchase' });
   }
 }));
 
+/** Complete payment → unlock in My Documents */
+app.post('/api/v2/library/purchases/:orderNumber/complete', authMiddleware, asyncHandler(async (req, res) => {
+  const clientId = await getClientId(req, res);
+  if (!clientId) return;
+
+  try {
+    const result = await repo.completeLibraryPurchase(clientId, req.params.orderNumber, {
+      paymentReference: req.body?.paymentReference,
+      paymentMethod: req.body?.paymentMethod || 'demo',
+      couponCode: req.body?.couponCode,
+    });
+    res.json({
+      ok: true,
+      alreadyCompleted: result.alreadyCompleted,
+      document: result.document,
+      downloadUrl: result.downloadUrl,
+      message: 'Purchase completed. Document unlocked in My Documents.',
+    });
+  } catch (err) {
+    return res.status(400).json({ error: err.message || 'Could not complete purchase' });
+  }
+}));
+
+app.post('/api/v2/library/coupons/validate', asyncHandler(async (req, res) => {
+  const { code, templateSlug, price } = req.body || {};
+  let listPrice = Number(price) || 0;
+  if (templateSlug) {
+    const template = await repo.getLibraryTemplate(String(templateSlug), { accessType: 'paid' });
+    if (template) listPrice = Number(template.price) || 0;
+  }
+  res.json(repo.validateLibraryCoupon(code, { price: listPrice }));
+}));
+
+/** Removed: free grab of paid templates. Use purchase + My Documents download. */
+app.post('/api/v2/library/templates/:slug/download', authMiddleware, asyncHandler(async (_req, res) => {
+  res.status(410).json({
+    error: 'This endpoint was removed. Use POST /library/templates/:slug/purchase then POST /library/purchases/:orderNumber/complete, then download from My Documents.',
+    purchaseUrlTemplate: '/api/v2/library/templates/:slug/purchase',
+    completeUrlTemplate: '/api/v2/library/purchases/:orderNumber/complete',
+    documentsUrl: '/api/v2/documents',
+  });
+}));
+
 app.get('/api/v2/knowledge-bank/catalog', asyncHandler(async (req, res) => {
-  const { category, search } = req.query;
-  res.json(await repo.getLibraryCatalog({ category, search, accessType: 'public' }));
+  const { category, search, block, language, lang } = req.query;
+  res.json(await repo.getLibraryCatalog({
+    category,
+    search,
+    block,
+    language: language || lang,
+    accessType: 'public',
+  }));
 }));
 
 app.get('/api/v2/knowledge-bank/templates/:slug', asyncHandler(async (req, res) => {
@@ -326,6 +408,14 @@ app.get('/api/v2/documents/:orderNumber/download', authMiddleware, asyncHandler(
   const payload = await repo.getClientDocumentDownloadPayload(clientId, req.params.orderNumber);
   if (!payload) {
     return res.status(404).json({ error: 'Document not found' });
+  }
+
+  if (payload.kind === 'forbidden') {
+    return res.status(402).json({
+      error: payload.error,
+      document: payload.document,
+      completeUrl: `/api/v2/library/purchases/${req.params.orderNumber}/complete`,
+    });
   }
 
   if (payload.kind === 'buffer') {
