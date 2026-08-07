@@ -10,6 +10,7 @@ import { signToken, authMiddleware } from './middleware/auth.js';
 import { createLawyerRouter } from './routes/lawyerRoutes.js';
 import { createMessageRouter } from './routes/messageRoutes.js';
 import { createCaRouter } from './routes/caRoutes.js';
+import { createAdminLibraryRouter } from './routes/adminLibraryRoutes.js';
 import { seedProfessionalDemoData } from './db/professionalSeed.js';
 import { testConnection } from './db/index.js';
 import { runSchema } from './db/schema.js';
@@ -56,6 +57,13 @@ app.get('/', (_req, res) => {
     service: 'NexusLexis Main API',
     status: 'ok',
     health: '/api/health',
+    library: {
+      catalog: 'GET /api/v2/library/catalog',
+      template: 'GET /api/v2/library/templates/:slug',
+      sample: 'GET /api/v2/library/templates/:slug/sample',
+      createOrder: 'POST /api/v2/orders',
+      adminCreateTemplate: 'POST /api/v2/admin/library/templates',
+    },
   });
 });
 
@@ -228,6 +236,19 @@ app.get('/api/v2/library/templates/:slug', asyncHandler(async (req, res) => {
   }
   res.json(template);
 }));
+
+app.get('/api/v2/library/templates/:slug/sample', asyncHandler(async (req, res) => {
+  const sample = await repo.getLibraryTemplateSample(req.params.slug);
+  if (!sample || !sample.isActive) {
+    return res.status(404).json({ error: 'Template sample not found' });
+  }
+  const buffer = Buffer.from(sample.contentBase64, 'base64');
+  res.setHeader('Content-Type', sample.mimeType);
+  res.setHeader('Content-Disposition', `attachment; filename="${sample.fileName}"`);
+  res.send(buffer);
+}));
+
+app.use('/api/v2/admin/library', createAdminLibraryRouter());
 
 // ─── Client Documents ───────────────────────────────────────────────────────
 

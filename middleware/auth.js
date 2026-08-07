@@ -74,3 +74,11 @@ export async function authMiddleware(req, res, next) {
 export function getUserId(req) {
   return Number(req.user?.userId || req.user?.sub);
 }
+
+export function adminMiddleware(req, res, next) {
+  const role = req.user?.role || req.user?.activeRole;
+  if (role !== 'admin') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+  return next();
+}

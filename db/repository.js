@@ -179,14 +179,44 @@ export async function getOrders(clientId) {
   return result.rows.map(mapOrderRow);
 }
 
-export async function getLibraryCatalog({ category, search } = {}) {
+function mapLibraryTemplateRow(row, { includeFile = false } = {}) {
+  const hasFile = Boolean(row.template_content_base64 || row.template_file_name);
+  const template = {
+    id: row.service_id || row.id,
+    name: row.name,
+    slug: row.slug,
+    description: row.description || row.intake_schema?.category || row.category_description || '',
+    price: Number(row.price),
+    priceLabel: formatPrice(row.price),
+    deliveryDays: row.delivery_days,
+    intakeSchema: row.intake_schema || {},
+    isActive: row.is_active !== false,
+    hasTemplateFile: hasFile,
+    templateFileName: row.template_file_name || null,
+    templateMimeType: row.template_mime_type || null,
+    sampleDownloadUrl: hasFile
+      ? `/api/v2/library/templates/${row.slug}/sample`
+      : null,
+  };
+
+  if (includeFile && row.template_content_base64) {
+    template.templateContentBase64 = row.template_content_base64;
+  }
+
+  return template;
+}
+
+export async function getLibraryCatalog({ category, search, includeInactive = false } = {}) {
   let sql = `
     SELECT sc.id AS category_id, sc.name AS category_name, sc.slug AS category_slug,
            sc.description AS category_description, sc.icon AS category_icon,
            sc.display_order,
-           s.id AS service_id, s.name, s.slug, s.price, s.delivery_days, s.intake_schema
+           s.id AS service_id, s.name, s.slug, s.price, s.delivery_days, s.intake_schema,
+           s.description, s.is_active, s.template_file_name, s.template_mime_type,
+           CASE WHEN s.template_content_base64 IS NOT NULL THEN TRUE ELSE FALSE END AS has_file
     FROM service_categories sc
     LEFT JOIN services s ON s.category_id = sc.id
+      ${includeInactive ? '' : 'AND s.is_active IS TRUE'}
     WHERE 1=1`;
   const params = [];
 
@@ -223,16 +253,12 @@ export async function getLibraryCatalog({ category, search } = {}) {
     }
 
     if (row.service_id) {
-      categoriesMap.get(row.category_slug).templates.push({
-        id: row.service_id,
-        name: row.name,
-        slug: row.slug,
-        description: row.intake_schema?.category || row.category_description || '',
-        price: Number(row.price),
-        priceLabel: formatPrice(row.price),
-        deliveryDays: row.delivery_days,
-        intakeSchema: row.intake_schema || {},
-      });
+      categoriesMap.get(row.category_slug).templates.push(
+        mapLibraryTemplateRow({
+          ...row,
+          template_content_base64: row.has_file ? '1' : null,
+        })
+      );
     }
   }
 
@@ -242,14 +268,17 @@ export async function getLibraryCatalog({ category, search } = {}) {
   };
 }
 
-export async function getLibraryTemplate(slug) {
+export async function getLibraryTemplate(slug, { includeInactive = false, includeFile = false } = {}) {
   const result = await query(
     `SELECT s.id, s.name, s.slug, s.price, s.delivery_days, s.intake_schema,
+            s.description, s.is_active, s.template_file_name, s.template_mime_type,
+            ${includeFile ? 's.template_content_base64,' : ''}
             sc.id AS category_id, sc.name AS category_name, sc.slug AS category_slug,
             sc.description AS category_description, sc.icon AS category_icon
      FROM services s
      JOIN service_categories sc ON sc.id = s.category_id
-     WHERE s.slug = $1`,
+     WHERE s.slug = $1
+       ${includeInactive ? '' : 'AND s.is_active IS TRUE'}`,
     [slug]
   );
 
@@ -257,20 +286,242 @@ export async function getLibraryTemplate(slug) {
   if (!row) return null;
 
   return {
-    id: row.id,
-    name: row.name,
-    slug: row.slug,
-    description: row.category_description,
-    price: Number(row.price),
-    priceLabel: formatPrice(row.price),
-    deliveryDays: row.delivery_days,
-    intakeSchema: row.intake_schema || {},
+    ...mapLibraryTemplateRow(row, { includeFile }),
     category: {
       id: row.category_id,
       name: row.category_name,
       slug: row.category_slug,
       icon: row.category_icon,
     },
+  };
+}
+
+function slugify(value) {
+  return String(value || '')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80) || `template-${Date.now()}`;
+}
+
+async function allocateUniqueServiceSlug(baseSlug, excludeId = null) {
+  let candidate = baseSlug;
+  for (let i = 0; i < 20; i += 1) {
+    const result = await query(
+      excludeId
+        ? 'SELECT id FROM services WHERE slug = $1 AND id <> $2 LIMIT 1'
+        : 'SELECT id FROM services WHERE slug = $1 LIMIT 1',
+      excludeId ? [candidate, excludeId] : [candidate]
+    );
+    if (!result.rows[0]) return candidate;
+    candidate = `${baseSlug}-${i + 2}`;
+  }
+  return `${baseSlug}-${Date.now()}`;
+}
+
+export async function createLibraryCategory({ name, slug, description, icon, displayOrder }) {
+  const categoryName = String(name || '').trim();
+  if (!categoryName) throw new Error('Category name is required');
+
+  let finalSlug = slugify(slug || categoryName);
+  for (let i = 0; i < 20; i += 1) {
+    const existing = await query('SELECT id FROM service_categories WHERE slug = $1 LIMIT 1', [finalSlug]);
+    if (!existing.rows[0]) break;
+    finalSlug = `${slugify(slug || categoryName)}-${i + 2}`;
+  }
+
+  const result = await query(
+    `INSERT INTO service_categories (name, slug, description, icon, display_order)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (slug) DO UPDATE SET
+       name = EXCLUDED.name,
+       description = EXCLUDED.description,
+       icon = EXCLUDED.icon,
+       display_order = EXCLUDED.display_order
+     RETURNING id, name, slug, description, icon, display_order`,
+    [
+      categoryName,
+      finalSlug,
+      description || null,
+      icon || 'file-text',
+      Number.isFinite(Number(displayOrder)) ? Number(displayOrder) : 99,
+    ]
+  );
+
+  const row = result.rows[0];
+  return {
+    id: row.id,
+    name: row.name,
+    slug: row.slug,
+    description: row.description,
+    icon: row.icon,
+    displayOrder: row.display_order,
+  };
+}
+
+export async function createLibraryTemplate({
+  name,
+  slug,
+  categorySlug,
+  categoryId,
+  price,
+  deliveryDays,
+  description,
+  intakeSchema,
+  isActive = true,
+  file,
+}) {
+  const templateName = String(name || '').trim();
+  if (!templateName) throw new Error('Template name is required');
+
+  let resolvedCategoryId = categoryId ? Number(categoryId) : null;
+  if (!resolvedCategoryId && categorySlug) {
+    const cat = await query('SELECT id FROM service_categories WHERE slug = $1', [categorySlug]);
+    resolvedCategoryId = cat.rows[0]?.id || null;
+  }
+  if (!resolvedCategoryId) {
+    const fallback = await query(
+      `SELECT id FROM service_categories WHERE slug = 'document-services' LIMIT 1`
+    );
+    resolvedCategoryId = fallback.rows[0]?.id || null;
+  }
+  if (!resolvedCategoryId) {
+    throw new Error('Category not found. Create a category first or pass categorySlug.');
+  }
+
+  const baseSlug = slugify(slug || templateName);
+  const finalSlug = await allocateUniqueServiceSlug(baseSlug);
+  const parsedPrice = Number(price);
+  const parsedDays = Number(deliveryDays);
+
+  const result = await query(
+    `INSERT INTO services (
+       category_id, name, slug, price, delivery_days, intake_schema,
+       description, is_active, template_file_name, template_mime_type, template_content_base64
+     ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11)
+     RETURNING id, name, slug, price, delivery_days, intake_schema, description, is_active,
+               template_file_name, template_mime_type,
+               CASE WHEN template_content_base64 IS NOT NULL THEN TRUE ELSE FALSE END AS has_file`,
+    [
+      resolvedCategoryId,
+      templateName,
+      finalSlug,
+      Number.isFinite(parsedPrice) ? parsedPrice : 0,
+      Number.isFinite(parsedDays) && parsedDays > 0 ? parsedDays : 7,
+      JSON.stringify(intakeSchema || {
+        summary: { type: 'textarea', label: 'Brief / instructions', required: true },
+      }),
+      description || null,
+      isActive !== false,
+      file?.fileName || null,
+      file?.mimeType || null,
+      file?.contentBase64 || null,
+    ]
+  );
+
+  return mapLibraryTemplateRow({
+    ...result.rows[0],
+    service_id: result.rows[0].id,
+    template_content_base64: result.rows[0].has_file ? '1' : null,
+  });
+}
+
+export async function updateLibraryTemplate(idOrSlug, {
+  name,
+  slug,
+  categorySlug,
+  categoryId,
+  price,
+  deliveryDays,
+  description,
+  intakeSchema,
+  isActive,
+  file,
+  clearFile = false,
+}) {
+  const existing = await query(
+    `SELECT id, slug FROM services
+     WHERE id::text = $1 OR slug = $1
+     LIMIT 1`,
+    [String(idOrSlug)]
+  );
+  const current = existing.rows[0];
+  if (!current) return null;
+
+  let resolvedCategoryId = categoryId ? Number(categoryId) : null;
+  if (!resolvedCategoryId && categorySlug) {
+    const cat = await query('SELECT id FROM service_categories WHERE slug = $1', [categorySlug]);
+    resolvedCategoryId = cat.rows[0]?.id || null;
+    if (!resolvedCategoryId) throw new Error('Category not found');
+  }
+
+  let nextSlug = current.slug;
+  if (slug || name) {
+    nextSlug = await allocateUniqueServiceSlug(slugify(slug || name), current.id);
+  }
+
+  const sets = [];
+  const params = [];
+  const push = (sqlPart, value) => {
+    params.push(value);
+    sets.push(`${sqlPart} = $${params.length}`);
+  };
+
+  if (name !== undefined) push('name', String(name).trim());
+  if (slug || name) push('slug', nextSlug);
+  if (resolvedCategoryId) push('category_id', resolvedCategoryId);
+  if (price !== undefined) push('price', Number(price) || 0);
+  if (deliveryDays !== undefined) push('delivery_days', Number(deliveryDays) || 7);
+  if (description !== undefined) push('description', description || null);
+  if (intakeSchema !== undefined) {
+    params.push(JSON.stringify(intakeSchema || {}));
+    sets.push(`intake_schema = $${params.length}::jsonb`);
+  }
+  if (isActive !== undefined) push('is_active', isActive !== false && isActive !== 'false');
+
+  if (clearFile) {
+    push('template_file_name', null);
+    push('template_mime_type', null);
+    push('template_content_base64', null);
+  } else if (file?.contentBase64) {
+    push('template_file_name', file.fileName || null);
+    push('template_mime_type', file.mimeType || null);
+    push('template_content_base64', file.contentBase64);
+  }
+
+  if (!sets.length) {
+    return getLibraryTemplate(current.slug, { includeInactive: true });
+  }
+
+  params.push(current.id);
+  await query(
+    `UPDATE services SET ${sets.join(', ')} WHERE id = $${params.length}`,
+    params
+  );
+
+  const updated = await query('SELECT slug FROM services WHERE id = $1', [current.id]);
+  return getLibraryTemplate(updated.rows[0].slug, { includeInactive: true });
+}
+
+export async function deactivateLibraryTemplate(idOrSlug) {
+  return updateLibraryTemplate(idOrSlug, { isActive: false });
+}
+
+export async function getLibraryTemplateSample(slug) {
+  const result = await query(
+    `SELECT slug, template_file_name, template_mime_type, template_content_base64, is_active
+     FROM services WHERE slug = $1`,
+    [slug]
+  );
+  const row = result.rows[0];
+  if (!row || !row.template_content_base64) return null;
+  return {
+    slug: row.slug,
+    fileName: row.template_file_name || `${row.slug}.bin`,
+    mimeType: row.template_mime_type || 'application/octet-stream',
+    contentBase64: row.template_content_base64,
+    isActive: row.is_active !== false,
   };
 }
 

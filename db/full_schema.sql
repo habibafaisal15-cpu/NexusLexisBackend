@@ -216,10 +216,22 @@ CREATE TABLE IF NOT EXISTS services (
     slug VARCHAR(255) UNIQUE NOT NULL,
     price DECIMAL(10, 2) NOT NULL,
     delivery_days INT NOT NULL,
-    intake_schema JSONB NOT NULL DEFAULT '{}'::jsonb
+    intake_schema JSONB NOT NULL DEFAULT '{}'::jsonb,
+    description TEXT,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    template_file_name VARCHAR(255),
+    template_mime_type VARCHAR(100),
+    template_content_base64 TEXT
 );
 
+ALTER TABLE services ADD COLUMN IF NOT EXISTS description TEXT;
+ALTER TABLE services ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE services ADD COLUMN IF NOT EXISTS template_file_name VARCHAR(255);
+ALTER TABLE services ADD COLUMN IF NOT EXISTS template_mime_type VARCHAR(100);
+ALTER TABLE services ADD COLUMN IF NOT EXISTS template_content_base64 TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_services_schema_gin ON services USING GIN (intake_schema);
+CREATE INDEX IF NOT EXISTS idx_services_active ON services (is_active) WHERE is_active IS TRUE;
 
 CREATE TABLE IF NOT EXISTS service_orders (
     id BIGSERIAL PRIMARY KEY,
