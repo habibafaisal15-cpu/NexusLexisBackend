@@ -19,25 +19,28 @@ export async function seedLibraryCatalog() {
     const categoryId = catResult.rows[0].id;
 
     for (const template of category.templates) {
+      const accessType = template.accessType === 'public' ? 'public' : 'paid';
       await query(
-        `INSERT INTO services (category_id, name, slug, price, delivery_days, intake_schema)
-         VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+        `INSERT INTO services (category_id, name, slug, price, delivery_days, intake_schema, access_type)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
          ON CONFLICT (slug) DO UPDATE SET
            category_id = EXCLUDED.category_id,
            name = EXCLUDED.name,
            price = EXCLUDED.price,
            delivery_days = EXCLUDED.delivery_days,
-           intake_schema = EXCLUDED.intake_schema`,
+           intake_schema = EXCLUDED.intake_schema,
+           access_type = COALESCE(services.access_type, EXCLUDED.access_type)`,
         [
           categoryId,
           template.name,
           template.slug,
-          template.price,
+          accessType === 'public' ? 0 : template.price,
           template.deliveryDays,
           JSON.stringify({
             summary: { type: 'textarea', label: 'Brief / instructions', required: true },
             category: category.name,
           }),
+          accessType,
         ]
       );
     }

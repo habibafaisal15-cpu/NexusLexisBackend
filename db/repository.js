@@ -145,6 +145,13 @@ export async function getActivities(clientId) {
 }
 
 function mapOrderRow(row) {
+  const formData = row.formData || {};
+  const isLibraryDownload = formData.source === 'library_download'
+    || String(row.completed_file || '').startsWith('library:');
+  const canDownload = Boolean(row.completed_file)
+    || row.status === 'completed'
+    || isLibraryDownload;
+
   return {
     id: row.order_number || String(row.id),
     orderNumber: row.order_number || String(row.id),
@@ -158,8 +165,9 @@ function mapOrderRow(row) {
     expectedDelivery: row.expected_delivery,
     milestone: row.milestone || null,
     completedFile: row.completed_file || null,
-    downloadUrl: row.completed_file ? `/api/v2/documents/${row.order_number}/download` : null,
-    formData: row.formData || {},
+    source: formData.source || (isLibraryDownload ? 'library_download' : 'order'),
+    downloadUrl: canDownload ? `/api/v2/documents/${row.order_number}/download` : null,
+    formData,
   };
 }
 
@@ -179,24 +187,47 @@ export async function getOrders(clientId) {
   return result.rows.map(mapOrderRow);
 }
 
+function normalizeAccessType(value, { fallback = 'paid' } = {}) {
+  const raw = String(value || '').toLowerCase().trim();
+  if (raw === 'public' || raw === 'knowledge_bank' || raw === 'knowledge-bank' || raw === 'free') {
+    return 'public';
+  }
+  if (raw === 'paid' || raw === 'library' || raw === 'client') {
+    return 'paid';
+  }
+  return fallback;
+}
+
 function mapLibraryTemplateRow(row, { includeFile = false } = {}) {
   const hasFile = Boolean(row.template_content_base64 || row.template_file_name);
+  const accessType = normalizeAccessType(row.access_type, { fallback: 'paid' });
   const template = {
     id: row.service_id || row.id,
     name: row.name,
     slug: row.slug,
     description: row.description || row.intake_schema?.category || row.category_description || '',
     price: Number(row.price),
-    priceLabel: formatPrice(row.price),
+    priceLabel: accessType === 'public' ? 'Free' : formatPrice(row.price),
     deliveryDays: row.delivery_days,
     intakeSchema: row.intake_schema || {},
     isActive: row.is_active !== false,
+    accessType,
+    listing: accessType === 'public' ? 'knowledge_bank' : 'library',
+    isFree: accessType === 'public',
+    isPaid: accessType === 'paid',
     hasTemplateFile: hasFile,
     templateFileName: row.template_file_name || null,
     templateMimeType: row.template_mime_type || null,
-    sampleDownloadUrl: hasFile
+    sampleDownloadUrl: hasFile && accessType === 'paid'
       ? `/api/v2/library/templates/${row.slug}/sample`
-      : null,
+      : (hasFile && accessType === 'public'
+        ? `/api/v2/knowledge-bank/templates/${row.slug}/download`
+        : null),
+    downloadUrl: accessType === 'paid'
+      ? `/api/v2/library/templates/${row.slug}/download`
+      : (accessType === 'public' && hasFile
+        ? `/api/v2/knowledge-bank/templates/${row.slug}/download`
+        : null),
   };
 
   if (includeFile && row.template_content_base64) {
@@ -206,19 +237,31 @@ function mapLibraryTemplateRow(row, { includeFile = false } = {}) {
   return template;
 }
 
-export async function getLibraryCatalog({ category, search, includeInactive = false } = {}) {
+export async function getLibraryCatalog({
+  category,
+  search,
+  includeInactive = false,
+  accessType = null,
+} = {}) {
+  const normalizedAccess = accessType ? normalizeAccessType(accessType, { fallback: null }) : null;
+
   let sql = `
     SELECT sc.id AS category_id, sc.name AS category_name, sc.slug AS category_slug,
            sc.description AS category_description, sc.icon AS category_icon,
            sc.display_order,
            s.id AS service_id, s.name, s.slug, s.price, s.delivery_days, s.intake_schema,
-           s.description, s.is_active, s.template_file_name, s.template_mime_type,
+           s.description, s.is_active, s.access_type, s.template_file_name, s.template_mime_type,
            CASE WHEN s.template_content_base64 IS NOT NULL THEN TRUE ELSE FALSE END AS has_file
     FROM service_categories sc
     LEFT JOIN services s ON s.category_id = sc.id
       ${includeInactive ? '' : 'AND s.is_active IS TRUE'}
     WHERE 1=1`;
   const params = [];
+
+  if (normalizedAccess) {
+    params.push(normalizedAccess);
+    sql += ` AND s.access_type = $${params.length}`;
+  }
 
   if (category) {
     params.push(category);
@@ -262,24 +305,44 @@ export async function getLibraryCatalog({ category, search, includeInactive = fa
     }
   }
 
+  // Drop empty categories for filtered public/paid listings
+  const categories = [...categoriesMap.values()].filter((cat) => {
+    if (!normalizedAccess) return true;
+    return cat.templates.length > 0;
+  });
+
   return {
-    categories: [...categoriesMap.values()],
-    templateCount: [...categoriesMap.values()].reduce((sum, cat) => sum + cat.templates.length, 0),
+    accessType: normalizedAccess,
+    categories,
+    templateCount: categories.reduce((sum, cat) => sum + cat.templates.length, 0),
   };
 }
 
-export async function getLibraryTemplate(slug, { includeInactive = false, includeFile = false } = {}) {
+export async function getLibraryTemplate(slug, {
+  includeInactive = false,
+  includeFile = false,
+  accessType = null,
+} = {}) {
+  const normalizedAccess = accessType ? normalizeAccessType(accessType, { fallback: null }) : null;
+  const params = [slug];
+  let accessClause = '';
+  if (normalizedAccess) {
+    params.push(normalizedAccess);
+    accessClause = `AND s.access_type = $${params.length}`;
+  }
+
   const result = await query(
     `SELECT s.id, s.name, s.slug, s.price, s.delivery_days, s.intake_schema,
-            s.description, s.is_active, s.template_file_name, s.template_mime_type,
+            s.description, s.is_active, s.access_type, s.template_file_name, s.template_mime_type,
             ${includeFile ? 's.template_content_base64,' : ''}
             sc.id AS category_id, sc.name AS category_name, sc.slug AS category_slug,
             sc.description AS category_description, sc.icon AS category_icon
      FROM services s
      JOIN service_categories sc ON sc.id = s.category_id
      WHERE s.slug = $1
-       ${includeInactive ? '' : 'AND s.is_active IS TRUE'}`,
-    [slug]
+       ${includeInactive ? '' : 'AND s.is_active IS TRUE'}
+       ${accessClause}`,
+    params
   );
 
   const row = result.rows[0];
@@ -370,10 +433,13 @@ export async function createLibraryTemplate({
   description,
   intakeSchema,
   isActive = true,
+  accessType = 'paid',
   file,
 }) {
   const templateName = String(name || '').trim();
   if (!templateName) throw new Error('Template name is required');
+
+  const resolvedAccessType = normalizeAccessType(accessType, { fallback: 'paid' });
 
   let resolvedCategoryId = categoryId ? Number(categoryId) : null;
   if (!resolvedCategoryId && categorySlug) {
@@ -394,26 +460,34 @@ export async function createLibraryTemplate({
   const finalSlug = await allocateUniqueServiceSlug(baseSlug);
   const parsedPrice = Number(price);
   const parsedDays = Number(deliveryDays);
+  const finalPrice = resolvedAccessType === 'public'
+    ? 0
+    : (Number.isFinite(parsedPrice) ? parsedPrice : 0);
+
+  if (resolvedAccessType === 'paid' && finalPrice <= 0) {
+    throw new Error('Paid library templates require a price greater than 0');
+  }
 
   const result = await query(
     `INSERT INTO services (
        category_id, name, slug, price, delivery_days, intake_schema,
-       description, is_active, template_file_name, template_mime_type, template_content_base64
-     ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11)
-     RETURNING id, name, slug, price, delivery_days, intake_schema, description, is_active,
+       description, is_active, access_type, template_file_name, template_mime_type, template_content_base64
+     ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12)
+     RETURNING id, name, slug, price, delivery_days, intake_schema, description, is_active, access_type,
                template_file_name, template_mime_type,
                CASE WHEN template_content_base64 IS NOT NULL THEN TRUE ELSE FALSE END AS has_file`,
     [
       resolvedCategoryId,
       templateName,
       finalSlug,
-      Number.isFinite(parsedPrice) ? parsedPrice : 0,
+      finalPrice,
       Number.isFinite(parsedDays) && parsedDays > 0 ? parsedDays : 7,
       JSON.stringify(intakeSchema || {
         summary: { type: 'textarea', label: 'Brief / instructions', required: true },
       }),
       description || null,
       isActive !== false,
+      resolvedAccessType,
       file?.fileName || null,
       file?.mimeType || null,
       file?.contentBase64 || null,
@@ -437,6 +511,7 @@ export async function updateLibraryTemplate(idOrSlug, {
   description,
   intakeSchema,
   isActive,
+  accessType,
   file,
   clearFile = false,
 }) {
@@ -471,7 +546,6 @@ export async function updateLibraryTemplate(idOrSlug, {
   if (name !== undefined) push('name', String(name).trim());
   if (slug || name) push('slug', nextSlug);
   if (resolvedCategoryId) push('category_id', resolvedCategoryId);
-  if (price !== undefined) push('price', Number(price) || 0);
   if (deliveryDays !== undefined) push('delivery_days', Number(deliveryDays) || 7);
   if (description !== undefined) push('description', description || null);
   if (intakeSchema !== undefined) {
@@ -479,6 +553,17 @@ export async function updateLibraryTemplate(idOrSlug, {
     sets.push(`intake_schema = $${params.length}::jsonb`);
   }
   if (isActive !== undefined) push('is_active', isActive !== false && isActive !== 'false');
+  if (accessType !== undefined) {
+    const resolvedAccessType = normalizeAccessType(accessType, { fallback: 'paid' });
+    push('access_type', resolvedAccessType);
+    if (resolvedAccessType === 'public') {
+      push('price', 0);
+    } else if (price !== undefined) {
+      push('price', Number(price) || 0);
+    }
+  } else if (price !== undefined) {
+    push('price', Number(price) || 0);
+  }
 
   if (clearFile) {
     push('template_file_name', null);
@@ -508,16 +593,25 @@ export async function deactivateLibraryTemplate(idOrSlug) {
   return updateLibraryTemplate(idOrSlug, { isActive: false });
 }
 
-export async function getLibraryTemplateSample(slug) {
+export async function getLibraryTemplateSample(slug, { accessType = null } = {}) {
+  const normalizedAccess = accessType ? normalizeAccessType(accessType, { fallback: null }) : null;
+  const params = [slug];
+  let accessClause = '';
+  if (normalizedAccess) {
+    params.push(normalizedAccess);
+    accessClause = `AND access_type = $${params.length}`;
+  }
+
   const result = await query(
-    `SELECT slug, template_file_name, template_mime_type, template_content_base64, is_active
-     FROM services WHERE slug = $1`,
-    [slug]
+    `SELECT slug, access_type, template_file_name, template_mime_type, template_content_base64, is_active
+     FROM services WHERE slug = $1 ${accessClause}`,
+    params
   );
   const row = result.rows[0];
   if (!row || !row.template_content_base64) return null;
   return {
     slug: row.slug,
+    accessType: normalizeAccessType(row.access_type),
     fileName: row.template_file_name || `${row.slug}.bin`,
     mimeType: row.template_mime_type || 'application/octet-stream',
     contentBase64: row.template_content_base64,
@@ -549,7 +643,11 @@ export async function getClientDocuments(clientId, { status } = {}) {
   const documents = result.rows.map((row) => ({
     ...mapOrderRow(row),
     createdAt: row.expected_delivery || null,
-    hasDownload: Boolean(row.completed_file),
+    hasDownload: Boolean(
+      row.completed_file
+      || row.status === 'completed'
+      || row.formData?.source === 'library_download'
+    ),
   }));
 
   return {
@@ -579,17 +677,31 @@ export async function getClientDocumentOrder(clientId, orderNumber) {
 }
 
 export async function createOrder(clientId, { templateId, templateName, formData }) {
-  let serviceResult = await query('SELECT id FROM services WHERE slug = $1', [templateId]);
-  if (!serviceResult.rows[0]) {
+  let serviceResult = await query(
+    `SELECT id, name, access_type, is_active, price
+     FROM services WHERE slug = $1`,
+    [templateId]
+  );
+
+  if (serviceResult.rows[0]) {
+    const service = serviceResult.rows[0];
+    if (service.is_active === false) {
+      throw new Error('This template is no longer available');
+    }
+    if (normalizeAccessType(service.access_type) === 'public') {
+      throw new Error('Public knowledge-bank templates are free to download. Paid library templates require an order.');
+    }
+  } else {
     const cat = await query(`SELECT id FROM service_categories WHERE slug = 'document-services' LIMIT 1`);
     const categoryId = cat.rows[0]?.id || 1;
     serviceResult = await query(
-      `INSERT INTO services (category_id, name, slug, price, delivery_days, intake_schema)
-       VALUES ($1, $2, $3, 0, 7, '{}'::jsonb) RETURNING id`,
+      `INSERT INTO services (category_id, name, slug, price, delivery_days, intake_schema, access_type)
+       VALUES ($1, $2, $3, 0, 7, '{}'::jsonb, 'paid') RETURNING id, name, access_type, is_active, price`,
       [categoryId, templateName, templateId]
     );
   }
 
+  const resolvedName = serviceResult.rows[0].name || templateName;
   const orderNumber = String(Math.floor(1000 + Math.random() * 9000));
   const result = await query(
     `INSERT INTO service_orders (order_number, client_id, service_id, status, intake_form_data)
@@ -598,24 +710,128 @@ export async function createOrder(clientId, { templateId, templateName, formData
     [orderNumber, clientId, serviceResult.rows[0].id, JSON.stringify(formData || {})]
   );
 
-  await addActivity(clientId, 'order', 'DocStarted', { doc: templateName });
+  await addActivity(clientId, 'order', 'DocStarted', { doc: resolvedName });
 
   await createNotification(clientId, {
     title: 'Document Order Submitted',
-    body: `Your custom document request for "${templateName}" (Order #${orderNumber}) has been submitted and is pending payment.`,
+    body: `Your custom document request for "${resolvedName}" (Order #${orderNumber}) has been submitted and is pending payment.`,
     type: 'order',
     link: '/account/orders',
     audience: 'client',
   });
 
-  const row = result.rows[0];
+  return getClientDocumentOrder(clientId, orderNumber);
+}
+
+/** Client downloads a paid library template → saved into My Documents. */
+export async function downloadLibraryTemplateToDocuments(clientId, slug) {
+  const serviceResult = await query(
+    `SELECT id, name, slug, access_type, is_active, price,
+            template_file_name, template_mime_type, template_content_base64
+     FROM services
+     WHERE slug = $1`,
+    [slug]
+  );
+  const service = serviceResult.rows[0];
+  if (!service || service.is_active === false) {
+    throw new Error('Template not found');
+  }
+  if (normalizeAccessType(service.access_type) !== 'paid') {
+    throw new Error('Use the knowledge-bank download endpoint for public templates');
+  }
+
+  const hasFile = Boolean(service.template_content_base64);
+  const orderNumber = String(Math.floor(1000 + Math.random() * 9000));
+  const formData = {
+    source: 'library_download',
+    templateSlug: service.slug,
+    downloadedAt: new Date().toISOString(),
+  };
+
+  const result = await query(
+    `INSERT INTO service_orders (
+       order_number, client_id, service_id, status, intake_form_data,
+       completed_file, milestone, expected_delivery
+     ) VALUES (
+       $1, $2, $3, $4, $5::jsonb,
+       $6, $7, CURRENT_TIMESTAMP
+     )
+     RETURNING order_number`,
+    [
+      orderNumber,
+      clientId,
+      service.id,
+      hasFile ? 'completed' : 'pending_payment',
+      JSON.stringify(formData),
+      hasFile ? `library:${service.slug}` : null,
+      hasFile ? 'Downloaded from library' : 'Awaiting payment',
+    ]
+  );
+
+  await addActivity(clientId, 'order', 'DocStarted', { doc: service.name });
+  await createNotification(clientId, {
+    title: hasFile ? 'Template saved to My Documents' : 'Library template added',
+    body: hasFile
+      ? `"${service.name}" was downloaded and added to My Documents.`
+      : `"${service.name}" was added to My Documents and is pending payment.`,
+    type: 'order',
+    link: '/account/documents',
+    audience: 'client',
+  });
+
+  const document = await getClientDocumentOrder(clientId, result.rows[0].order_number);
   return {
-    id: row.order_number,
-    templateId,
-    templateName,
-    status: 'Pending Payment',
-    date: formatDate(),
-    formData: formData || {}
+    document,
+    downloadUrl: document?.downloadUrl || `/api/v2/documents/${orderNumber}/download`,
+    hasFile,
+  };
+}
+
+export async function getClientDocumentDownloadPayload(clientId, orderNumber) {
+  const result = await query(
+    `SELECT so.order_number, so.status, so.completed_file, so.intake_form_data AS "formData",
+            s.slug AS "templateId", s.name AS "templateName",
+            s.template_file_name, s.template_mime_type, s.template_content_base64
+     FROM service_orders so
+     JOIN services s ON s.id = so.service_id
+     WHERE so.client_id = $1 AND so.order_number = $2`,
+    [clientId, orderNumber]
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+
+  const formData = row.formData || {};
+  const librarySlug = String(row.completed_file || '').startsWith('library:')
+    ? String(row.completed_file).slice('library:'.length)
+    : (formData.source === 'library_download' ? row.templateId : null);
+
+  if (librarySlug && row.template_content_base64) {
+    return {
+      kind: 'buffer',
+      fileName: row.template_file_name || `${row.templateName || librarySlug}.bin`,
+      mimeType: row.template_mime_type || 'application/octet-stream',
+      buffer: Buffer.from(row.template_content_base64, 'base64'),
+      document: mapOrderRow({
+        ...row,
+        formData,
+        categorySlug: null,
+        categoryName: null,
+        expected_delivery: null,
+        milestone: 'Downloaded from library',
+      }),
+    };
+  }
+
+  return {
+    kind: 'document',
+    document: mapOrderRow({
+      ...row,
+      formData,
+      categorySlug: null,
+      categoryName: null,
+      expected_delivery: null,
+      milestone: null,
+    }),
   };
 }
 

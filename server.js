@@ -62,6 +62,9 @@ app.get('/', (_req, res) => {
       template: 'GET /api/v2/library/templates/:slug',
       sample: 'GET /api/v2/library/templates/:slug/sample',
       createOrder: 'POST /api/v2/orders',
+      libraryDownload: 'POST /api/v2/library/templates/:slug/download',
+      knowledgeBank: 'GET /api/v2/knowledge-bank/catalog',
+      knowledgeDownload: 'GET /api/v2/knowledge-bank/templates/:slug/download',
       adminCreateTemplate: 'POST /api/v2/admin/library/templates',
     },
   });
@@ -224,13 +227,15 @@ app.delete('/api/v2/notifications', authMiddleware, asyncHandler(async (req, res
 
 // ─── Document Library (catalog) ───────────────────────────────────────────────
 
+// ─── Document Library (paid) + Knowledge Bank (public) ───────────────────────
+
 app.get('/api/v2/library/catalog', asyncHandler(async (req, res) => {
   const { category, search } = req.query;
-  res.json(await repo.getLibraryCatalog({ category, search }));
+  res.json(await repo.getLibraryCatalog({ category, search, accessType: 'paid' }));
 }));
 
 app.get('/api/v2/library/templates/:slug', asyncHandler(async (req, res) => {
-  const template = await repo.getLibraryTemplate(req.params.slug);
+  const template = await repo.getLibraryTemplate(req.params.slug, { accessType: 'paid' });
   if (!template) {
     return res.status(404).json({ error: 'Template not found' });
   }
@@ -238,9 +243,53 @@ app.get('/api/v2/library/templates/:slug', asyncHandler(async (req, res) => {
 }));
 
 app.get('/api/v2/library/templates/:slug/sample', asyncHandler(async (req, res) => {
-  const sample = await repo.getLibraryTemplateSample(req.params.slug);
+  const sample = await repo.getLibraryTemplateSample(req.params.slug, { accessType: 'paid' });
   if (!sample || !sample.isActive) {
     return res.status(404).json({ error: 'Template sample not found' });
+  }
+  const buffer = Buffer.from(sample.contentBase64, 'base64');
+  res.setHeader('Content-Type', sample.mimeType);
+  res.setHeader('Content-Disposition', `attachment; filename="${sample.fileName}"`);
+  res.send(buffer);
+}));
+
+/** Download paid library template → adds entry to My Documents */
+app.post('/api/v2/library/templates/:slug/download', authMiddleware, asyncHandler(async (req, res) => {
+  const clientId = await getClientId(req, res);
+  if (!clientId) return;
+
+  try {
+    const result = await repo.downloadLibraryTemplateToDocuments(clientId, req.params.slug);
+    res.status(201).json({
+      ok: true,
+      message: result.hasFile
+        ? 'Template downloaded and saved to My Documents'
+        : 'Template added to My Documents',
+      document: result.document,
+      downloadUrl: result.downloadUrl,
+    });
+  } catch (err) {
+    return res.status(400).json({ error: err.message || 'Could not download template' });
+  }
+}));
+
+app.get('/api/v2/knowledge-bank/catalog', asyncHandler(async (req, res) => {
+  const { category, search } = req.query;
+  res.json(await repo.getLibraryCatalog({ category, search, accessType: 'public' }));
+}));
+
+app.get('/api/v2/knowledge-bank/templates/:slug', asyncHandler(async (req, res) => {
+  const template = await repo.getLibraryTemplate(req.params.slug, { accessType: 'public' });
+  if (!template) {
+    return res.status(404).json({ error: 'Knowledge bank template not found' });
+  }
+  res.json(template);
+}));
+
+app.get('/api/v2/knowledge-bank/templates/:slug/download', asyncHandler(async (req, res) => {
+  const sample = await repo.getLibraryTemplateSample(req.params.slug, { accessType: 'public' });
+  if (!sample || !sample.isActive) {
+    return res.status(404).json({ error: 'Knowledge bank file not found' });
   }
   const buffer = Buffer.from(sample.contentBase64, 'base64');
   res.setHeader('Content-Type', sample.mimeType);
@@ -274,12 +323,20 @@ app.get('/api/v2/documents/:orderNumber/download', authMiddleware, asyncHandler(
   const clientId = await getClientId(req, res);
   if (!clientId) return;
 
-  const document = await repo.getClientDocumentOrder(clientId, req.params.orderNumber);
-  if (!document) {
+  const payload = await repo.getClientDocumentDownloadPayload(clientId, req.params.orderNumber);
+  if (!payload) {
     return res.status(404).json({ error: 'Document not found' });
   }
 
-  if (document.completedFile) {
+  if (payload.kind === 'buffer') {
+    res.setHeader('Content-Type', payload.mimeType);
+    res.setHeader('Content-Disposition', `attachment; filename="${payload.fileName}"`);
+    return res.send(payload.buffer);
+  }
+
+  const document = payload.document;
+
+  if (document.completedFile && !String(document.completedFile).startsWith('library:')) {
     const filePath = join(UPLOADS_DIR, document.completedFile);
     if (existsSync(filePath)) {
       return res.download(filePath, document.completedFile);
@@ -328,8 +385,12 @@ app.post('/api/v2/orders', authMiddleware, asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'templateId and templateName are required' });
   }
 
-  const order = await repo.createOrder(clientId, { templateId, templateName, formData });
-  res.status(201).json(order);
+  try {
+    const order = await repo.createOrder(clientId, { templateId, templateName, formData });
+    res.status(201).json(order);
+  } catch (err) {
+    return res.status(400).json({ error: err.message || 'Could not create order' });
+  }
 }));
 
 // ─── Matters (VLO) ──────────────────────────────────────────────────────────

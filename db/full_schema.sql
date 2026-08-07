@@ -219,6 +219,8 @@ CREATE TABLE IF NOT EXISTS services (
     intake_schema JSONB NOT NULL DEFAULT '{}'::jsonb,
     description TEXT,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    access_type VARCHAR(20) NOT NULL DEFAULT 'paid'
+        CHECK (access_type IN ('public', 'paid')),
     template_file_name VARCHAR(255),
     template_mime_type VARCHAR(100),
     template_content_base64 TEXT
@@ -226,12 +228,16 @@ CREATE TABLE IF NOT EXISTS services (
 
 ALTER TABLE services ADD COLUMN IF NOT EXISTS description TEXT;
 ALTER TABLE services ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE services ADD COLUMN IF NOT EXISTS access_type VARCHAR(20) NOT NULL DEFAULT 'paid';
 ALTER TABLE services ADD COLUMN IF NOT EXISTS template_file_name VARCHAR(255);
 ALTER TABLE services ADD COLUMN IF NOT EXISTS template_mime_type VARCHAR(100);
 ALTER TABLE services ADD COLUMN IF NOT EXISTS template_content_base64 TEXT;
 
+UPDATE services SET access_type = 'paid' WHERE access_type IS NULL OR access_type = '';
+
 CREATE INDEX IF NOT EXISTS idx_services_schema_gin ON services USING GIN (intake_schema);
 CREATE INDEX IF NOT EXISTS idx_services_active ON services (is_active) WHERE is_active IS TRUE;
+CREATE INDEX IF NOT EXISTS idx_services_access_type ON services (access_type) WHERE is_active IS TRUE;
 
 CREATE TABLE IF NOT EXISTS service_orders (
     id BIGSERIAL PRIMARY KEY,

@@ -49,14 +49,27 @@ function filePayload(file) {
   };
 }
 
+function parseAccessType(value, fallback = 'paid') {
+  const raw = String(value || '').toLowerCase().trim();
+  if (['public', 'knowledge_bank', 'knowledge-bank', 'free'].includes(raw)) return 'public';
+  if (['paid', 'library', 'client'].includes(raw)) return 'paid';
+  return fallback;
+}
+
 export function createAdminLibraryRouter() {
   const router = Router();
   const upload = createUpload();
 
   router.use(authMiddleware, adminMiddleware);
 
-  router.get('/catalog', asyncHandler(async (_req, res) => {
-    res.json(await repo.getLibraryCatalog({ includeInactive: true }));
+  router.get('/catalog', asyncHandler(async (req, res) => {
+    const accessType = req.query.accessType
+      ? parseAccessType(req.query.accessType, null)
+      : null;
+    res.json(await repo.getLibraryCatalog({
+      includeInactive: true,
+      accessType: accessType || undefined,
+    }));
   }));
 
   router.post('/categories', asyncHandler(async (req, res) => {
@@ -75,6 +88,7 @@ export function createAdminLibraryRouter() {
     upload.single('file'),
     asyncHandler(async (req, res) => {
       const intakeSchema = parseJsonField(req.body.intakeSchema, undefined);
+      const accessType = parseAccessType(req.body.accessType || req.body.type, 'paid');
       const template = await repo.createLibraryTemplate({
         name: req.body.name,
         slug: req.body.slug,
@@ -84,6 +98,7 @@ export function createAdminLibraryRouter() {
         deliveryDays: req.body.deliveryDays,
         description: req.body.description,
         intakeSchema,
+        accessType,
         isActive: req.body.isActive !== 'false' && req.body.isActive !== false,
         file: filePayload(req.file),
       });
@@ -105,6 +120,9 @@ export function createAdminLibraryRouter() {
         deliveryDays: req.body.deliveryDays,
         description: req.body.description,
         intakeSchema,
+        accessType: req.body.accessType !== undefined || req.body.type !== undefined
+          ? parseAccessType(req.body.accessType || req.body.type, 'paid')
+          : undefined,
         isActive: req.body.isActive,
         clearFile: req.body.clearFile === true || req.body.clearFile === 'true',
         file: filePayload(req.file),
