@@ -19,6 +19,7 @@ import { ensureLibrarySchema } from './db/ensureLibrarySchema.js';
 import * as repo from './db/repository.js';
 import * as authRepo from './db/auth.js';
 import { asyncHandler } from './shared/lib/asyncHandler.js';
+import { parsePagination } from './shared/lib/pagination.js';
 import { runLexChat } from './services/lex/lexPipeline.js';
 import { warmQuestionBank } from './services/lex/questionBank.js';
 
@@ -248,6 +249,7 @@ app.delete('/api/v2/notifications', authMiddleware, asyncHandler(async (req, res
 
 app.get('/api/v2/library/catalog', optionalAuthMiddleware, asyncHandler(async (req, res) => {
   const { category, search, block, language, lang } = req.query;
+  const { page, limit } = parsePagination(req.query);
   res.json(await repo.getLibraryCatalog({
     category,
     search,
@@ -255,6 +257,9 @@ app.get('/api/v2/library/catalog', optionalAuthMiddleware, asyncHandler(async (r
     language: language || lang,
     accessType: 'paid',
     clientId: optionalClientId(req),
+    paginate: true,
+    page,
+    limit,
   }));
 }));
 
@@ -387,7 +392,8 @@ app.get('/api/v2/documents', authMiddleware, asyncHandler(async (req, res) => {
   const clientId = await getClientId(req, res);
   if (!clientId) return;
   const { status } = req.query;
-  res.json(await repo.getClientDocuments(clientId, { status }));
+  const { page, limit } = parsePagination(req.query);
+  res.json(await repo.getClientDocuments(clientId, { status, page, limit, paginate: true }));
 }));
 
 app.get('/api/v2/documents/:orderNumber', authMiddleware, asyncHandler(async (req, res) => {

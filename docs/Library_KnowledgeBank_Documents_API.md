@@ -1,9 +1,10 @@
 # NexusLexis — Library, Knowledge Bank & My Documents (API Contract)
 
 **Document ID:** NL-DOC-LIB-002  
-**Version:** 2.0  
-**Updated:** 2026-08-07  
+**Version:** 2.1  
+**Updated:** 2026-08-08  
 **Replaces:** NL-DOC-LIB-001 (download-without-payment flow removed)  
+**Related CR:** NL-BE-CR-PAGINATION-001  
 **Base URL:** `https://nexus-lexis-backend-ql8w.vercel.app/api/v2`
 
 ```env
@@ -70,6 +71,57 @@ Catalog also returns:
 ```
 
 Query params on catalogs: `category`, `search`, `block`, `language` (or `lang`).
+
+---
+
+## 3.1 Pagination (Library, My Documents, Admin catalog)
+
+Shared contract on:
+
+- `GET /library/catalog`
+- `GET /documents`
+- `GET /admin/library/catalog`
+
+Knowledge Bank is **not** paginated in this version.
+
+| Param | Default | Notes |
+|-------|---------|--------|
+| `page` | `1` | 1-based. `0` / negative → `1`. If `page > totalPages`, clamped to last page. |
+| `limit` | `12` | Allowed: `6`, `12`, `24`, `48`. Invalid → nearest allow-list or `12`. Max `48`. |
+
+Always returned (even if `page`/`limit` omitted):
+
+```json
+"pagination": {
+  "page": 1,
+  "limit": 12,
+  "totalItems": 87,
+  "totalPages": 8,
+  "hasNext": true,
+  "hasPrev": false
+}
+```
+
+**Approach A (Library + Admin):** paginate **templates**, not categories.
+
+- `documents` / `templates` = current page only (flat)
+- `categories` = filter metadata (`slug`, `name`, `icon`, `templateCount`) — no nested page slice
+- `templateCount` = `pagination.totalItems`
+- Filters (`search`, `category`, `accessType`, `status`) apply **before** OFFSET/LIMIT
+
+**My Documents:** `documents` = current page only. Sort newest first.
+
+Examples:
+
+```
+GET /library/catalog?page=2&limit=12&category=document-services
+GET /library/catalog?page=1&limit=24&search=nda
+GET /documents?page=1&limit=12&status=completed
+GET /admin/library/catalog?page=1&limit=12&accessType=public
+GET /admin/library/catalog?page=3&limit=24&search=khula
+```
+
+Admin catalog also includes `counts: { paid, public, inactive }` for tabs.
 
 ---
 
@@ -158,6 +210,8 @@ Demo codes: `WELCOME10` (10%), `NEXUS20` (20%).
 | GET | `/documents` | Client JWT |
 | GET | `/documents/:orderNumber` | Client JWT |
 | GET | `/documents/:orderNumber/download` | Client JWT |
+
+`GET /documents` accepts `page`, `limit`, `status` (`completed`, `pending_payment`, `active`, …). Response includes `documents` (current page), `counts` (all-user totals for tabs), and `pagination`.
 
 Download of unpaid library purchases returns **402** with `completeUrl`.
 

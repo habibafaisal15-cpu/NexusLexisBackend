@@ -1,4 +1,5 @@
 import { query } from './index.js';
+import { parsePagination, buildPaginationMeta } from '../shared/lib/pagination.js';
 
 const DEMO_CLIENT_EMAIL = process.env.DEMO_CLIENT_EMAIL || 'client@nexuslexis.law';
 
@@ -288,55 +289,45 @@ async function getOwnedLibraryPurchases(clientId) {
   return map;
 }
 
-export async function getLibraryCatalog({
+function buildLibraryFilterSql({
   category,
   search,
   block,
   language,
   includeInactive = false,
   accessType = null,
-  clientId = null,
 } = {}) {
   const normalizedAccess = accessType ? normalizeAccessType(accessType, { fallback: null }) : null;
-  const ownedMap = await getOwnedLibraryPurchases(clientId);
-
-  let sql = `
-    SELECT sc.id AS category_id, sc.name AS category_name, sc.slug AS category_slug,
-           sc.description AS category_description, sc.icon AS category_icon,
-           sc.display_order,
-           s.id AS service_id, s.name, s.slug, s.price, s.delivery_days, s.intake_schema,
-           s.description, s.is_active, s.access_type, s.template_file_name, s.template_mime_type,
-           s.code, s.block, s.language, s.author, s.version,
-           CASE WHEN s.template_content_base64 IS NOT NULL THEN TRUE ELSE FALSE END AS has_file
-    FROM service_categories sc
-    LEFT JOIN services s ON s.category_id = sc.id
-      ${includeInactive ? '' : 'AND COALESCE(s.is_active, TRUE) IS TRUE'}
-    WHERE 1=1`;
   const params = [];
+  let where = ' WHERE s.id IS NOT NULL';
+
+  if (!includeInactive) {
+    where += ' AND COALESCE(s.is_active, TRUE) IS TRUE';
+  }
 
   if (normalizedAccess) {
     params.push(normalizedAccess);
-    sql += ` AND s.access_type = $${params.length}`;
+    where += ` AND s.access_type = $${params.length}`;
   }
 
   if (category) {
     params.push(category);
-    sql += ` AND sc.slug = $${params.length}`;
+    where += ` AND sc.slug = $${params.length}`;
   }
 
   if (block) {
     params.push(String(block).toLowerCase());
-    sql += ` AND LOWER(COALESCE(s.block, '')) = $${params.length}`;
+    where += ` AND LOWER(COALESCE(s.block, '')) = $${params.length}`;
   }
 
   if (language) {
     params.push(String(language).toLowerCase());
-    sql += ` AND LOWER(COALESCE(s.language, '')) = $${params.length}`;
+    where += ` AND LOWER(COALESCE(s.language, '')) = $${params.length}`;
   }
 
   if (search) {
-    params.push(`%${search.toLowerCase()}%`);
-    sql += ` AND (
+    params.push(`%${String(search).toLowerCase()}%`);
+    where += ` AND (
       LOWER(s.name) LIKE $${params.length}
       OR LOWER(COALESCE(s.slug, '')) LIKE $${params.length}
       OR LOWER(COALESCE(s.code, '')) LIKE $${params.length}
@@ -345,57 +336,143 @@ export async function getLibraryCatalog({
     )`;
   }
 
-  sql += ' ORDER BY sc.display_order ASC, sc.name ASC, s.name ASC';
+  return { where, params, normalizedAccess };
+}
 
-  const result = await query(sql, params);
-  const categoriesMap = new Map();
-  const filters = { blocks: new Set(), languages: new Set(), categories: new Set() };
-
-  for (const row of result.rows) {
-    if (!categoriesMap.has(row.category_slug)) {
-      categoriesMap.set(row.category_slug, {
-        id: row.category_id,
-        name: row.category_name,
-        slug: row.category_slug,
-        description: row.category_description,
-        icon: row.category_icon,
-        displayOrder: row.display_order,
-        templates: [],
-      });
-      filters.categories.add(row.category_slug);
-    }
-
-    if (row.service_id) {
-      if (row.block) filters.blocks.add(row.block);
-      if (row.language) filters.languages.add(row.language);
-      const ownedOrderNumber = ownedMap.get(Number(row.service_id)) || null;
-      categoriesMap.get(row.category_slug).templates.push(
-        mapLibraryTemplateRow({
-          ...row,
-          template_content_base64: row.has_file ? '1' : null,
-        }, {
-          owned: Boolean(ownedOrderNumber),
-          ownedOrderNumber,
-        })
-      );
-    }
-  }
-
-  const categories = [...categoriesMap.values()].filter((cat) => {
-    if (!normalizedAccess) return true;
-    return cat.templates.length > 0;
+export async function getLibraryCatalog({
+  category,
+  search,
+  block,
+  language,
+  includeInactive = false,
+  accessType = null,
+  clientId = null,
+  paginate = false,
+  page,
+  limit,
+} = {}) {
+  const ownedMap = await getOwnedLibraryPurchases(clientId);
+  const { where, params, normalizedAccess } = buildLibraryFilterSql({
+    category,
+    search,
+    block,
+    language,
+    includeInactive,
+    accessType,
   });
 
-  return {
+  const fromJoin = `
+    FROM services s
+    JOIN service_categories sc ON sc.id = s.category_id
+    ${where}`;
+
+  const countResult = await query(`SELECT COUNT(*)::int AS total ${fromJoin}`, params);
+  const totalItems = countResult.rows[0]?.total || 0;
+
+  const paginationInput = paginate
+    ? parsePagination({ page, limit })
+    : { page: 1, limit: Math.max(totalItems, 1) };
+  const pagination = buildPaginationMeta({
+    ...paginationInput,
+    totalItems,
+  });
+
+  const pageParams = [...params];
+  let limitSql = '';
+  if (paginate) {
+    pageParams.push(pagination.limit, pagination.offset);
+    limitSql = ` LIMIT $${pageParams.length - 1} OFFSET $${pageParams.length}`;
+  }
+
+  const pageResult = await query(
+    `SELECT sc.id AS category_id, sc.name AS category_name, sc.slug AS category_slug,
+            sc.description AS category_description, sc.icon AS category_icon,
+            sc.display_order,
+            s.id AS service_id, s.name, s.slug, s.price, s.delivery_days, s.intake_schema,
+            s.description, s.is_active, s.access_type, s.template_file_name, s.template_mime_type,
+            s.code, s.block, s.language, s.author, s.version,
+            CASE WHEN s.template_content_base64 IS NOT NULL THEN TRUE ELSE FALSE END AS has_file
+     ${fromJoin}
+     ORDER BY sc.display_order ASC, sc.name ASC, s.name ASC
+     ${limitSql}`,
+    pageParams
+  );
+
+  const documents = pageResult.rows.map((row) => {
+    const ownedOrderNumber = ownedMap.get(Number(row.service_id)) || null;
+    return mapLibraryTemplateRow({
+      ...row,
+      template_content_base64: row.has_file ? '1' : null,
+    }, {
+      owned: Boolean(ownedOrderNumber),
+      ownedOrderNumber,
+    });
+  });
+
+  const metaResult = await query(
+    `SELECT sc.id, sc.name, sc.slug, sc.description, sc.icon, sc.display_order,
+            COUNT(s.id)::int AS template_count,
+            ARRAY_REMOVE(ARRAY_AGG(DISTINCT s.block), NULL) AS blocks,
+            ARRAY_REMOVE(ARRAY_AGG(DISTINCT s.language), NULL) AS languages
+     ${fromJoin}
+     GROUP BY sc.id, sc.name, sc.slug, sc.description, sc.icon, sc.display_order
+     ORDER BY sc.display_order ASC, sc.name ASC`,
+    params
+  );
+
+  const filters = { categories: [], blocks: new Set(), languages: new Set() };
+  const categories = metaResult.rows.map((row) => {
+    filters.categories.push(row.slug);
+    (row.blocks || []).forEach((value) => filters.blocks.add(value));
+    (row.languages || []).forEach((value) => filters.languages.add(value));
+    return {
+      id: row.id,
+      name: row.name,
+      slug: row.slug,
+      description: row.description,
+      icon: row.icon,
+      displayOrder: row.display_order,
+      templateCount: row.template_count,
+      templates: paginate ? [] : documents.filter((doc) => doc.categorySlug === row.slug),
+    };
+  });
+
+  const payload = {
     accessType: normalizedAccess,
     categories,
-    templateCount: categories.reduce((sum, cat) => sum + cat.templates.length, 0),
+    documents,
+    templates: documents,
+    templateCount: totalItems,
     filters: {
-      categories: [...filters.categories],
+      categories: filters.categories,
       blocks: [...filters.blocks].sort(),
       languages: [...filters.languages].sort(),
     },
   };
+
+  if (paginate) {
+    payload.pagination = {
+      page: pagination.page,
+      limit: pagination.limit,
+      totalItems: pagination.totalItems,
+      totalPages: pagination.totalPages,
+      hasNext: pagination.hasNext,
+      hasPrev: pagination.hasPrev,
+    };
+  }
+
+  if (includeInactive) {
+    const summary = await query(`
+      SELECT
+        COUNT(*) FILTER (WHERE access_type = 'paid')::int AS paid,
+        COUNT(*) FILTER (WHERE access_type = 'public')::int AS public,
+        COUNT(*) FILTER (WHERE COALESCE(is_active, TRUE) IS FALSE)::int AS inactive
+      FROM services
+    `);
+    payload.counts = summary.rows[0] || { paid: 0, public: 0, inactive: 0 };
+  }
+
+  return payload;
 }
 
 export async function getLibraryTemplate(slug, {
@@ -809,27 +886,47 @@ export async function getLibraryTemplateSample(slug, { accessType = null } = {})
   };
 }
 
-export async function getClientDocuments(clientId, { status } = {}) {
-  let sql = `
-    SELECT so.id, so.order_number, so.status, so.intake_form_data AS "formData",
-           so.expected_delivery, so.completed_file, so.milestone,
-           s.slug AS "templateId", s.name AS "templateName",
-           sc.slug AS "categorySlug", sc.name AS "categoryName"
+export async function getClientDocuments(clientId, { status, page, limit, paginate = true } = {}) {
+  const params = [clientId];
+  let where = 'WHERE so.client_id = $1';
+  const normalizedStatus = String(status || '').trim().toLowerCase();
+
+  if (normalizedStatus === 'active') {
+    where += ` AND so.status IN ('pending_payment', 'processing', 'in_progress')`;
+  } else if (['completed', 'pending_payment', 'processing', 'in_progress', 'cancelled'].includes(normalizedStatus)) {
+    params.push(normalizedStatus);
+    where += ` AND so.status = $${params.length}`;
+  }
+
+  const fromSql = `
     FROM service_orders so
     JOIN services s ON s.id = so.service_id
     LEFT JOIN service_categories sc ON sc.id = s.category_id
-    WHERE so.client_id = $1`;
-  const params = [clientId];
+    ${where}`;
 
-  if (status === 'active') {
-    sql += ` AND so.status IN ('pending_payment', 'processing', 'in_progress')`;
-  } else if (status === 'completed') {
-    sql += ` AND so.status = 'completed'`;
-  }
+  const countResult = await query(`SELECT COUNT(*)::int AS total ${fromSql}`, params);
+  const totalItems = countResult.rows[0]?.total || 0;
+  const pagination = buildPaginationMeta({
+    ...parsePagination({ page, limit }),
+    totalItems,
+  });
 
-  sql += ' ORDER BY so.id DESC';
+  const pageParams = [...params, pagination.limit, pagination.offset];
+  const result = await query(
+    `SELECT so.id, so.order_number, so.status, so.intake_form_data AS "formData",
+            so.expected_delivery, so.completed_file, so.milestone,
+            s.slug AS "templateId", s.name AS "templateName",
+            sc.slug AS "categorySlug", sc.name AS "categoryName"
+     ${fromSql}
+     ORDER BY COALESCE(
+       NULLIF(so.intake_form_data->>'purchasedAt', '')::timestamptz,
+       NULLIF(so.intake_form_data->>'createdAt', '')::timestamptz,
+       so.expected_delivery
+     ) DESC NULLS LAST, so.id DESC
+     LIMIT $${pageParams.length - 1} OFFSET $${pageParams.length}`,
+    pageParams
+  );
 
-  const result = await query(sql, params);
   const documents = result.rows.map((row) => ({
     ...mapOrderRow(row),
     createdAt: row.formData?.purchasedAt
@@ -838,13 +935,27 @@ export async function getClientDocuments(clientId, { status } = {}) {
       || null,
   }));
 
+  const countsResult = await query(
+    `SELECT
+       COUNT(*)::int AS total,
+       COUNT(*) FILTER (WHERE so.status IN ('pending_payment', 'processing', 'in_progress'))::int AS active,
+       COUNT(*) FILTER (WHERE so.status = 'completed')::int AS completed
+     FROM service_orders so
+     WHERE so.client_id = $1`,
+    [clientId]
+  );
+
   return {
     documents,
-    counts: {
-      total: documents.length,
-      active: documents.filter((d) => ['Pending Payment', 'Processing', 'In Progress'].includes(d.status)).length,
-      completed: documents.filter((d) => d.status === 'Completed').length,
-    },
+    counts: countsResult.rows[0] || { total: 0, active: 0, completed: 0 },
+    pagination: paginate ? {
+      page: pagination.page,
+      limit: pagination.limit,
+      totalItems: pagination.totalItems,
+      totalPages: pagination.totalPages,
+      hasNext: pagination.hasNext,
+      hasPrev: pagination.hasPrev,
+    } : undefined,
   };
 }
 

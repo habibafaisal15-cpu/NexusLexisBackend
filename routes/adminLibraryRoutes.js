@@ -3,6 +3,7 @@ import multer from 'multer';
 import { authMiddleware, adminMiddleware } from '../middleware/auth.js';
 import { asyncHandler } from '../shared/lib/asyncHandler.js';
 import * as repo from '../db/repository.js';
+import { parsePagination } from '../shared/lib/pagination.js';
 
 const ALLOWED_MIME = new Set([
   'application/pdf',
@@ -66,9 +67,17 @@ export function createAdminLibraryRouter() {
     const accessType = req.query.accessType
       ? parseAccessType(req.query.accessType, null)
       : null;
+    const { page, limit } = parsePagination(req.query);
     res.json(await repo.getLibraryCatalog({
       includeInactive: true,
       accessType: accessType || undefined,
+      category: req.query.category,
+      search: req.query.search,
+      block: req.query.block,
+      language: req.query.language || req.query.lang,
+      paginate: true,
+      page,
+      limit,
     }));
   }));
 
