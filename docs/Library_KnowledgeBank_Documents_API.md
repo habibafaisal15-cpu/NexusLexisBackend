@@ -1,7 +1,7 @@
 # NexusLexis — Library, Knowledge Bank & My Documents (API Contract)
 
 **Document ID:** NL-DOC-LIB-002  
-**Version:** 2.1  
+**Version:** 2.2  
 **Updated:** 2026-08-08  
 **Replaces:** NL-DOC-LIB-001 (download-without-payment flow removed)  
 **Related CR:** NL-BE-CR-PAGINATION-001  
@@ -9,6 +9,50 @@
 
 ```env
 VITE_API_BASE_URL=https://nexus-lexis-backend-ql8w.vercel.app/api/v2
+VITE_AUTH_API_URL=https://nexus-lexis-backend-45v4.vercel.app/api/auth
+```
+
+Admin demo: `admin@nexuslexis.law` / `admin123`  
+Client demo: `client@nexuslexis.law` / `password123`
+
+---
+
+## 0. What changed (send this to frontend)
+
+### Added
+
+| Method | Path | Notes |
+|--------|------|--------|
+| POST | `/library/templates/:slug/purchase` | Start buy (pending payment) |
+| POST | `/library/purchases/:orderNumber/complete` | Complete pay → unlock My Documents |
+| POST | `/library/coupons/validate` | Demo coupons `WELCOME10`, `NEXUS20` |
+| GET | `/knowledge-bank/catalog` | Public templates only |
+| GET | `/knowledge-bank/templates/:slug` | Public detail |
+| GET | `/knowledge-bank/templates/:slug/download` | Free download (not My Documents) |
+| GET | `/library/templates/:slug/sample` | Paid preview only |
+| GET/POST/PUT/DELETE | `/admin/library/categories` | Admin category CRUD |
+| POST/PUT/DELETE | `/admin/library/templates` | Admin template upload (`accessType`) |
+| GET | `/admin/library/catalog` | Admin catalog + pagination + `counts` |
+| GET | `/admin/documents` | **TEMP** list purchases (testing) |
+| DELETE | `/admin/documents/:orderNumber` | **TEMP** hard-delete My Documents row |
+| DELETE | `/admin/library/templates/:slug?hard=true` | **TEMP** hard-delete template + purchases |
+
+### Updated
+
+| Method | Path | Change |
+|--------|------|--------|
+| GET | `/library/catalog` | Paid only + field contract + `owned` + **pagination** + flat `documents[]` |
+| GET | `/library/templates/:slug` | Paid only + field contract + `owned` |
+| GET | `/documents` | Includes library purchases + **pagination** + `counts` |
+| GET | `/documents/:orderNumber/download` | Serves purchased library file; **402** if unpaid |
+| POST | `/library/templates/:slug/download` | **410 Gone** — do not use |
+
+### Pagination (Library, My Documents, Admin catalog)
+
+`page` default `1`, `limit` default `12` (allow 6/12/24/48, max 48).
+
+```json
+"pagination": { "page": 1, "limit": 12, "totalItems": 87, "totalPages": 8, "hasNext": true, "hasPrev": false }
 ```
 
 ---
