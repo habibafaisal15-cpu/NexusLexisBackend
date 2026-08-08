@@ -180,6 +180,18 @@ export function createAdminLibraryRouter() {
   );
 
   router.delete('/templates/:idOrSlug', asyncHandler(async (req, res) => {
+    const hard = req.query.hard === 'true' || req.query.permanent === 'true';
+    if (hard) {
+      const deleted = await repo.hardDeleteLibraryTemplate(req.params.idOrSlug);
+      if (!deleted) return res.status(404).json({ error: 'Template not found' });
+      return res.json({
+        ok: true,
+        temporaryTestingApi: true,
+        hardDeleted: true,
+        template: deleted,
+      });
+    }
+
     const template = await repo.deactivateLibraryTemplate(req.params.idOrSlug);
     if (!template) {
       return res.status(404).json({ error: 'Template not found' });

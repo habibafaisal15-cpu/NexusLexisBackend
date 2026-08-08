@@ -234,6 +234,18 @@ Auth: admin Bearer.
 
 Template multipart fields: `name`, `accessType` (`public`|`paid`), `categorySlug`, `price`, `description`, `code`, `block`, `language`, `author`, `version`, `file`.
 
+### Temporary testing deletes (remove after QA)
+
+Admin Bearer required. Marked `temporaryTestingApi: true`.
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/admin/documents` | List recent purchases across clients |
+| DELETE | `/admin/documents/:orderNumber` | Hard-delete one My Documents row |
+| DELETE | `/admin/library/templates/:idOrSlug?hard=true` | Hard-delete template + its purchases |
+
+Normal `DELETE /admin/library/templates/:idOrSlug` (no `hard`) still only deactivates.
+
 ---
 
 ## 9. Acceptance checklist

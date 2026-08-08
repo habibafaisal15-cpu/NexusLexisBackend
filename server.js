@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 
-import { signToken, authMiddleware, optionalAuthMiddleware } from './middleware/auth.js';
+import { signToken, authMiddleware, optionalAuthMiddleware, adminMiddleware } from './middleware/auth.js';
 import { createLawyerRouter } from './routes/lawyerRoutes.js';
 import { createMessageRouter } from './routes/messageRoutes.js';
 import { createCaRouter } from './routes/caRoutes.js';
@@ -385,6 +385,30 @@ app.get('/api/v2/knowledge-bank/templates/:slug/download', asyncHandler(async (r
 }));
 
 app.use('/api/v2/admin/library', createAdminLibraryRouter());
+
+// TEMPORARY testing APIs — remove after QA. Admin can add/delete documents freely.
+app.get('/api/v2/admin/documents', authMiddleware, adminMiddleware, asyncHandler(async (req, res) => {
+  res.json({
+    temporaryTestingApi: true,
+    documents: await repo.adminListDocuments({ limit: req.query.limit }),
+  });
+}));
+
+app.delete('/api/v2/admin/documents/:orderNumber', authMiddleware, adminMiddleware, asyncHandler(async (req, res) => {
+  const deleted = await repo.adminDeleteDocument(req.params.orderNumber);
+  if (!deleted) {
+    return res.status(404).json({ error: 'Document not found' });
+  }
+  res.json({
+    ok: true,
+    temporaryTestingApi: true,
+    deleted: {
+      orderNumber: deleted.order_number,
+      clientId: deleted.client_id,
+      status: deleted.status,
+    },
+  });
+}));
 
 // ─── Client Documents ───────────────────────────────────────────────────────
 

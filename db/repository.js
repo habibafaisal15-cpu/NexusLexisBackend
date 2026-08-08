@@ -860,6 +860,60 @@ export async function deactivateLibraryTemplate(idOrSlug) {
   return updateLibraryTemplate(idOrSlug, { isActive: false });
 }
 
+/** TEMPORARY testing helper — hard-delete a library template and its purchases. */
+export async function hardDeleteLibraryTemplate(idOrSlug) {
+  const existing = await query(
+    `SELECT id, slug, name FROM services WHERE id::text = $1 OR slug = $1 LIMIT 1`,
+    [String(idOrSlug)]
+  );
+  const current = existing.rows[0];
+  if (!current) return null;
+
+  const orders = await query(
+    `DELETE FROM service_orders WHERE service_id = $1 RETURNING order_number`,
+    [current.id]
+  );
+  await query(`DELETE FROM services WHERE id = $1`, [current.id]);
+
+  return {
+    id: current.id,
+    slug: current.slug,
+    name: current.name,
+    deletedOrders: orders.rows.map((row) => row.order_number),
+  };
+}
+
+/** TEMPORARY testing helper — delete one My Documents / purchase row. */
+export async function adminDeleteDocument(orderNumber) {
+  const result = await query(
+    `DELETE FROM service_orders
+     WHERE order_number = $1
+     RETURNING order_number, client_id, status`,
+    [String(orderNumber)]
+  );
+  return result.rows[0] || null;
+}
+
+/** TEMPORARY testing helper — list recent documents across clients. */
+export async function adminListDocuments({ limit = 50 } = {}) {
+  const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 200);
+  const result = await query(
+    `SELECT so.order_number, so.status, so.intake_form_data AS "formData",
+            so.expected_delivery, u.email AS client_email,
+            s.slug AS "templateId", s.name AS "templateName"
+     FROM service_orders so
+     JOIN services s ON s.id = so.service_id
+     JOIN users u ON u.id = so.client_id
+     ORDER BY so.id DESC
+     LIMIT $1`,
+    [safeLimit]
+  );
+  return result.rows.map((row) => ({
+    ...mapOrderRow(row),
+    clientEmail: row.client_email,
+  }));
+}
+
 export async function getLibraryTemplateSample(slug, { accessType = null } = {}) {
   const normalizedAccess = accessType ? normalizeAccessType(accessType, { fallback: null }) : null;
   const params = [slug];
