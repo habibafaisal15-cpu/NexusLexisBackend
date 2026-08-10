@@ -3,6 +3,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { pool } from './index.js';
 import { ensureLibrarySchema } from './ensureLibrarySchema.js';
+import { ensureAppointmentsSchema } from './ensureAppointmentsSchema.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -35,4 +36,5 @@ export async function runSchema() {
   `);
 
   await ensureLibrarySchema();
+  await ensureAppointmentsSchema();
 }

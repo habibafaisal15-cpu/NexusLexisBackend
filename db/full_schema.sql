@@ -281,10 +281,22 @@ CREATE TABLE IF NOT EXISTS appointments (
     lawyer_prof_id BIGINT NOT NULL REFERENCES lawyer_profiles(id) ON DELETE CASCADE,
     appointment_date DATE NOT NULL,
     appointment_time TIME NOT NULL,
-    mode VARCHAR(20) CHECK (mode IN ('online', 'inperson')),
+    mode VARCHAR(20) CHECK (mode IN ('online', 'inperson', 'document', 'video', 'audio', 'chat')),
     status VARCHAR(20) DEFAULT 'pending'
-        CHECK (status IN ('pending', 'confirmed', 'completed', 'cancelled')),
-    meeting_link VARCHAR(500)
+        CHECK (status IN ('pending', 'confirmed', 'completed', 'cancelled', 'rescheduled', 'no_show')),
+    meeting_link VARCHAR(500),
+    source VARCHAR(50) DEFAULT 'consultation',
+    category_id VARCHAR(100),
+    category_label VARCHAR(255),
+    subject VARCHAR(500),
+    service_area VARCHAR(255),
+    matter_note TEXT,
+    language VARCHAR(50),
+    client_city VARCHAR(100),
+    response_note TEXT,
+    attachments JSONB NOT NULL DEFAULT '[]'::jsonb,
+    delivered_order_number VARCHAR(100),
+    brief JSONB NOT NULL DEFAULT '{}'::jsonb
 );
 
 CREATE INDEX IF NOT EXISTS idx_appointments_slots_lookup

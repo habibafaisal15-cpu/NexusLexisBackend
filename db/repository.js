@@ -1310,6 +1310,23 @@ export async function getClientDocumentDownloadPayload(clientId, orderNumber) {
   if (!row) return null;
 
   const formData = row.formData || {};
+  const isCustomDoc = formData.source === 'custom_docs'
+    || String(row.completed_file || '').startsWith('custom:');
+  if (isCustomDoc && formData.deliveredFileBase64 && row.status === 'completed') {
+    return {
+      kind: 'buffer',
+      fileName: formData.deliveredFileName || `${row.templateName || 'custom-draft'}.pdf`,
+      mimeType: formData.deliveredMimeType || 'application/pdf',
+      buffer: Buffer.from(formData.deliveredFileBase64, 'base64'),
+      document: mapOrderRow({
+        ...row,
+        formData,
+        expected_delivery: null,
+        milestone: 'Delivered custom draft',
+      }),
+    };
+  }
+
   const isLibrary = formData.source === 'library_purchase'
     || formData.source === 'library_download'
     || String(row.completed_file || '').startsWith('library:');
@@ -1773,93 +1790,9 @@ function parseSlotTime(slot) {
   return `${String(hours).padStart(2, '0')}:${mins}:00`;
 }
 
-export async function bookAppointment(clientId, { lawyerName, lawyerProfileId, slot, mode, intake }) {
-  let lawyerRow = null;
-
-  if (lawyerProfileId) {
-    const byId = await query(
-      `SELECT lp.id, lp.user_id, lp.full_name
-       FROM lawyer_profiles lp
-       INNER JOIN users u ON u.id = lp.user_id AND u.is_active = TRUE
-       WHERE lp.id = $1 AND COALESCE(lp.is_suspended, FALSE) = FALSE`,
-      [Number(lawyerProfileId)]
-    );
-    lawyerRow = byId.rows[0] || null;
-  }
-
-  if (!lawyerRow && lawyerName) {
-    const byName = await query(
-      `SELECT lp.id, lp.user_id, lp.full_name
-       FROM lawyer_profiles lp
-       INNER JOIN users u ON u.id = lp.user_id AND u.is_active = TRUE
-       WHERE lp.full_name ILIKE $1 OR lp.full_name ILIKE $2
-       LIMIT 1`,
-      [lawyerName, `%${lawyerName.replace(/^Adv\.\s*/i, '')}%`]
-    );
-    lawyerRow = byName.rows[0] || null;
-  }
-
-  if (!lawyerRow) {
-    throw new Error('Lawyer not found');
-  }
-
-  if (Number(clientId) === Number(lawyerRow.user_id)) {
-    throw new Error('You cannot book a consultation with yourself');
-  }
-
-  const appointmentDate = formatDate();
-  const appointmentTime = parseSlotTime(slot);
-
-  const dbMode = mode === 'inperson' ? 'inperson' : 'online';
-  const clientNotes = intake?.trim() || null;
-  const insert = await query(
-    `INSERT INTO appointments (client_id, lawyer_prof_id, appointment_date, appointment_time, mode, status, client_notes)
-     VALUES ($1, $2, $3, $4, $5, 'pending', $6)
-     RETURNING id, appointment_date, appointment_time, mode, status`,
-    [clientId, lawyerRow.id, appointmentDate, appointmentTime, dbMode, clientNotes]
-  );
-
-  await query(
-    `UPDATE vlo_subscriptions SET consultations_used_this_month = consultations_used_this_month + 1
-     WHERE client_id = $1 AND status = 'active'`,
-    [clientId]
-  );
-
-  await addActivity(clientId, 'booking', 'Booked', { name: lawyerRow.full_name });
-
-  const clientName = await getUserDisplayName(clientId);
-  const slotLabel = slot || `${appointmentDate} at ${appointmentTime.slice(0, 5)}`;
-  const modeLabel = dbMode === 'online' ? 'online' : 'in-person';
-  const intakeNote = intake?.trim() ? ` Note: "${messagePreview(intake, 80)}"` : '';
-
-  await createNotification(clientId, {
-    title: 'Consultation Booked',
-    body: `Your ${modeLabel} consultation with ${lawyerRow.full_name} is requested for ${slotLabel}.`,
-    type: 'appointment',
-    link: '/account/appointments',
-    audience: 'client',
-  });
-
-  await createNotification(lawyerRow.user_id, {
-    title: 'New Consultation Request',
-    body: `${clientName} requested a ${modeLabel} consultation for ${slotLabel}.${intakeNote}`,
-    type: 'appointment',
-    link: '/account/appointments',
-    audience: 'lawyer',
-  });
-
-  const row = insert.rows[0];
-  return {
-    success: true,
-    appointmentId: row.id,
-    lawyerName: lawyerRow.full_name,
-    lawyerProfileId: lawyerRow.id,
-    slot: slotLabel,
-    mode: dbMode,
-    status: row.status,
-    date: row.appointment_date,
-    time: row.appointment_time
-  };
+export async function bookAppointment(clientId, body, files = []) {
+  const { bookLawyerAppointment } = await import('./appointmentService.js');
+  return bookLawyerAppointment(clientId, body, files);
 }
 
 export async function bookCaAppointment(clientId, { caProfileId, caName, slot, mode, intake, clientCity }) {
@@ -1950,46 +1883,8 @@ export async function bookCaAppointment(clientId, { caProfileId, caName, slot, m
 }
 
 export async function getClientAppointments(clientId) {
-  const [lawyerRows, caRows] = await Promise.all([
-    query(
-      `SELECT a.id, a.appointment_date, a.appointment_time, a.mode, a.status, a.client_notes AS notes,
-              lp.full_name AS professional_name, lp.id AS professional_profile_id, 'Lawyer' AS professional_role
-       FROM appointments a
-       JOIN lawyer_profiles lp ON lp.id = a.lawyer_prof_id
-       WHERE a.client_id = $1
-       ORDER BY a.appointment_date DESC, a.appointment_time DESC`,
-      [clientId]
-    ),
-    query(
-      `SELECT a.id, a.appointment_date, a.appointment_time, a.mode, a.status, a.topic AS notes,
-              cp.full_name AS professional_name, cp.id AS professional_profile_id, 'CA' AS professional_role
-       FROM ca_appointments a
-       JOIN ca_profiles cp ON cp.id = a.ca_prof_id
-       WHERE a.client_id = $1
-       ORDER BY a.appointment_date DESC, a.appointment_time DESC`,
-      [clientId]
-    ),
-  ]);
-
-  const mapRow = (row) => ({
-    id: row.id,
-    professionalName: row.professional_name,
-    professionalRole: row.professional_role,
-    professionalProfileId: row.professional_profile_id,
-    date: formatApptDate(row.appointment_date),
-    time: row.appointment_time?.slice?.(0, 5) || row.appointment_time,
-    mode: row.mode === 'online' ? 'Online' : 'In-Person',
-    status: formatApptStatus(row.status),
-    caseDescription: row.notes || '',
-    clientCity: (row.notes || '').match(/^City:\s*(.+)$/m)?.[1]?.trim() || '',
-  });
-
-  return {
-    appointments: [
-      ...lawyerRows.rows.map(mapRow),
-      ...caRows.rows.map(mapRow),
-    ].sort((a, b) => `${b.date}${b.time}`.localeCompare(`${a.date}${a.time}`)),
-  };
+  const { listClientAppointments } = await import('./appointmentService.js');
+  return listClientAppointments(clientId);
 }
 
 export async function getSubscription(clientId) {

@@ -227,104 +227,22 @@ export async function getLawyerAppointments(userId) {
   if (!profile) {
     return { appointments: [] };
   }
-
-  const result = await query(
-    `SELECT a.id, a.appointment_date, a.appointment_time, a.mode, a.status, a.meeting_link,
-            a.client_notes, u.username AS client_name, u.email AS client_email, u.phone AS client_phone
-     FROM appointments a
-     JOIN users u ON u.id = a.client_id
-     WHERE a.lawyer_prof_id = $1
-     ORDER BY a.appointment_date DESC, a.appointment_time DESC`,
-    [profile.id]
-  );
-
-  return {
-    appointments: result.rows.map((row) => ({
-      id: row.id,
-      clientName: row.client_name,
-      clientEmail: row.client_email,
-      clientPhone: row.client_phone,
-      date: row.appointment_date,
-      dateLabel: new Date(row.appointment_date).toLocaleDateString('en-PK', { day: 'numeric', month: 'short' }),
-      time: row.appointment_time?.slice?.(0, 5) || row.appointment_time,
-      slot: row.appointment_time?.slice?.(0, 5) || row.appointment_time,
-      mode: row.mode === 'online' ? 'Online' : 'In-Person',
-      consultationMode: row.mode === 'online' ? 'Online' : 'In-Person',
-      status: apptStatusLabel(row.status),
-      meetingLink: row.meeting_link,
-      notes: row.client_notes || ''
-    }))
-  };
+  const { listLawyerAppointments } = await import('./appointmentService.js');
+  return listLawyerAppointments(profile.id);
 }
 
-export async function updateLawyerAppointment(userId, appointmentId, status) {
+export async function updateLawyerAppointment(userId, appointmentId, statusOrBody) {
   const profile = await ensureLawyerProfile(userId);
-  const dbStatus = apptStatusToDb(status);
-  const appt = await query(
-    `SELECT a.client_id, a.appointment_date, a.appointment_time, a.mode, lp.full_name AS lawyer_name
-     FROM appointments a
-     JOIN lawyer_profiles lp ON lp.id = a.lawyer_prof_id
-     WHERE a.id = $1 AND a.lawyer_prof_id = $2`,
-    [appointmentId, profile.id]
-  );
-
-  if (!appt.rows[0]) {
-    throw new Error('Appointment not found');
+  const { patchLawyerAppointment, AppointmentError } = await import('./appointmentService.js');
+  const body = typeof statusOrBody === 'string' || statusOrBody == null
+    ? { status: statusOrBody }
+    : statusOrBody;
+  try {
+    return await patchLawyerAppointment(profile.id, appointmentId, body);
+  } catch (err) {
+    if (err instanceof AppointmentError) throw err;
+    throw err;
   }
-
-  await query(
-    `UPDATE appointments SET status = $1
-     WHERE id = $2 AND lawyer_prof_id = $3`,
-    [dbStatus, appointmentId, profile.id]
-  );
-
-  const statusLabel = apptStatusLabel(dbStatus);
-  const { dayLabel, timeLabel, slotLabel } = formatAppointmentSlot(
-    appt.rows[0].appointment_date,
-    appt.rows[0].appointment_time
-  );
-  const modeLabel = appt.rows[0].mode === 'online' ? 'online' : 'in-person';
-  const lawyerName = appt.rows[0].lawyer_name || 'Your lawyer';
-
-  let title = 'Appointment Update';
-  let body = `Your consultation on ${slotLabel} is now ${statusLabel}.`;
-  let messageLink = '/account/messages';
-
-  if (status === 'Accepted' || dbStatus === 'confirmed') {
-    title = 'Appointment Confirmed';
-    body = `${lawyerName} confirmed your ${modeLabel} appointment for ${dayLabel} at ${timeLabel}. Open Messages to talk further.`;
-  } else if (status === 'Declined' || (dbStatus === 'cancelled' && status === 'Declined')) {
-    title = 'Consultation Declined';
-    body = `${lawyerName} declined your ${modeLabel} consultation for ${slotLabel}.`;
-  } else if (status === 'Cancelled') {
-    title = 'Consultation Cancelled';
-    body = `${lawyerName} cancelled your ${modeLabel} consultation for ${slotLabel}.`;
-  }
-
-  if (status === 'Accepted' || dbStatus === 'confirmed') {
-    const clientId = appt.rows[0].client_id;
-    if (Number(userId) !== Number(clientId)) {
-      const confirmationText = buildAppointmentConfirmationMessage(dayLabel, timeLabel);
-      try {
-        const sent = await sendProfessionalToClientMessage(userId, clientId, confirmationText);
-        if (sent?.threadId) {
-          messageLink = `/account/messages?thread=${encodeURIComponent(sent.threadId)}`;
-        }
-      } catch (err) {
-        console.error('[appointments] confirmation message failed:', err.message);
-      }
-    }
-  }
-
-  await createNotification(appt.rows[0].client_id, {
-    title,
-    body,
-    type: 'appointment',
-    link: messageLink,
-    audience: 'client',
-  });
-
-  return { success: true, status: statusLabel };
 }
 
 export async function getLawyerOrders(userId) {

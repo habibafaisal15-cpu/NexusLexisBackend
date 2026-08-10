@@ -16,6 +16,7 @@ import { testConnection } from './db/index.js';
 import { runSchema } from './db/schema.js';
 import { seedDatabase } from './db/seed.js';
 import { ensureLibrarySchema } from './db/ensureLibrarySchema.js';
+import { ensureAppointmentsSchema } from './db/ensureAppointmentsSchema.js';
 import * as repo from './db/repository.js';
 import * as authRepo from './db/auth.js';
 import { asyncHandler } from './shared/lib/asyncHandler.js';
@@ -91,6 +92,7 @@ app.use('/uploads', express.static(UPLOADS_DIR));
 app.use(asyncHandler(async (_req, _res, next) => {
   if (IS_VERCEL) {
     await ensureLibrarySchema();
+    await ensureAppointmentsSchema();
   }
   next();
 }));
@@ -568,10 +570,16 @@ app.get('/api/vlo/matters/download/:id', authMiddleware, asyncHandler(async (req
 
 // ─── Appointments ───────────────────────────────────────────────────────────
 
-app.post('/api/v2/appointments', authMiddleware, asyncHandler(async (req, res) => {
+const appointmentUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 8 * 1024 * 1024 },
+});
+
+app.post('/api/v2/appointments', authMiddleware, appointmentUpload.array('attachments', 8), asyncHandler(async (req, res) => {
   const clientId = await getClientId(req, res);
   if (!clientId) return;
 
+  const body = req.body || {};
   const {
     lawyerName,
     lawyerProfileId,
@@ -582,7 +590,7 @@ app.post('/api/v2/appointments', authMiddleware, asyncHandler(async (req, res) =
     mode,
     intake,
     clientCity,
-  } = req.body;
+  } = body;
 
   const isCaBooking =
     professionalRole === 'CA'
@@ -608,16 +616,27 @@ app.post('/api/v2/appointments', authMiddleware, asyncHandler(async (req, res) =
     return res.status(400).json({ error: 'lawyerName or lawyerProfileId is required' });
   }
 
-  const result = await repo.bookAppointment(clientId, {
-    lawyerName,
-    lawyerProfileId,
-    slot,
-    mode,
-    intake: clientCity?.trim()
-      ? `City: ${clientCity.trim()}${intake?.trim() ? `\n\n${intake.trim()}` : ''}`
-      : intake,
-  });
-  res.status(201).json(result);
+  try {
+    const result = await repo.bookAppointment(clientId, body, req.files || []);
+    res.status(201).json(result);
+  } catch (err) {
+    return res.status(err.status || 400).json({ error: err.message, ...(err.extra || {}) });
+  }
+}));
+
+app.post('/api/v2/documents/custom-requests', authMiddleware, appointmentUpload.array('attachments', 8), asyncHandler(async (req, res) => {
+  const clientId = await getClientId(req, res);
+  if (!clientId) return;
+  try {
+    const result = await repo.bookAppointment(clientId, {
+      ...(req.body || {}),
+      source: 'custom_docs',
+      mode: req.body?.mode || 'document',
+    }, req.files || []);
+    res.status(201).json(result);
+  } catch (err) {
+    return res.status(err.status || 400).json({ error: err.message, ...(err.extra || {}) });
+  }
 }));
 
 app.get('/api/v2/appointments', authMiddleware, asyncHandler(async (req, res) => {
@@ -669,6 +688,15 @@ app.post('/api/v2/evaluations', authMiddleware, asyncHandler(async (req, res) =>
 app.get('/api/v2/lawyers/public', asyncHandler(async (req, res) => {
   const { city, practice, lang } = req.query;
   res.json(await repo.getLawyers({ city, practice, lang, verifiedOnly: true }));
+}));
+
+app.get('/api/v2/lawyers/:lawyerProfileId/availability', asyncHandler(async (req, res) => {
+  try {
+    const { getLawyerAvailability } = await import('./db/appointmentService.js');
+    res.json(await getLawyerAvailability(req.params.lawyerProfileId, req.query.date));
+  } catch (err) {
+    return res.status(err.status || 400).json({ error: err.message });
+  }
 }));
 
 app.get('/api/v2/cas/public', asyncHandler(async (req, res) => {

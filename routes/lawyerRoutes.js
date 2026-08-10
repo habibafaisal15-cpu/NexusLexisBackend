@@ -26,6 +26,10 @@ function requireLawyer(req, res) {
 
 export function createLawyerRouter(lexApiUrl, uploadsDir = 'uploads/') {
   const upload = multer({ dest: uploadsDir });
+  const memoryUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 8 * 1024 * 1024 },
+  });
   const router = Router();
 
   router.get('/dashboard', authMiddleware, asyncHandler(async (req, res) => {
@@ -69,7 +73,45 @@ export function createLawyerRouter(lexApiUrl, uploadsDir = 'uploads/') {
   router.patch('/appointments/:appointmentId', authMiddleware, asyncHandler(async (req, res) => {
     const userId = requireLawyer(req, res);
     if (!userId) return;
-    res.json(await pro.updateLawyerAppointment(userId, req.params.appointmentId, req.body.status));
+    try {
+      res.json(await pro.updateLawyerAppointment(userId, req.params.appointmentId, req.body));
+    } catch (err) {
+      const status = err.status || 400;
+      return res.status(status).json({ error: err.message, ...(err.extra || {}) });
+    }
+  }));
+
+  router.post('/appointments/:appointmentId/deliver', authMiddleware, memoryUpload.single('file'), asyncHandler(async (req, res) => {
+    const userId = requireLawyer(req, res);
+    if (!userId) return;
+    const profile = await pro.ensureLawyerProfile(userId);
+    const { deliverCustomDraft } = await import('../db/appointmentService.js');
+    try {
+      const result = await deliverCustomDraft(userId, profile.id, req.params.appointmentId, {
+        file: req.file,
+        title: req.body?.title,
+        notes: req.body?.notes,
+      });
+      res.status(201).json(result);
+    } catch (err) {
+      return res.status(err.status || 400).json({ error: err.message, ...(err.extra || {}) });
+    }
+  }));
+
+  router.get('/availability', authMiddleware, asyncHandler(async (req, res) => {
+    const userId = requireLawyer(req, res);
+    if (!userId) return;
+    const profile = await pro.ensureLawyerProfile(userId);
+    const { getLawyerAvailabilitySettings } = await import('../db/appointmentService.js');
+    res.json(await getLawyerAvailabilitySettings(profile.id));
+  }));
+
+  router.put('/availability', authMiddleware, asyncHandler(async (req, res) => {
+    const userId = requireLawyer(req, res);
+    if (!userId) return;
+    const profile = await pro.ensureLawyerProfile(userId);
+    const { setLawyerAvailabilitySettings } = await import('../db/appointmentService.js');
+    res.json(await setLawyerAvailabilitySettings(profile.id, req.body || {}));
   }));
 
   router.get('/orders', authMiddleware, asyncHandler(async (req, res) => {
@@ -78,10 +120,17 @@ export function createLawyerRouter(lexApiUrl, uploadsDir = 'uploads/') {
     res.json(await pro.getLawyerOrders(userId));
   }));
 
-  router.post('/orders/:orderId/deliver', authMiddleware, upload.single('document'), asyncHandler(async (req, res) => {
+  router.post('/orders/:orderId/deliver', authMiddleware, memoryUpload.single('document'), asyncHandler(async (req, res) => {
     const userId = requireLawyer(req, res);
     if (!userId) return;
-    res.json({ success: true, orderId: req.params.orderId, file: req.file?.originalname || 'document.pdf' });
+    const { deliverLawyerOrder } = await import('../db/appointmentService.js');
+    try {
+      const result = await deliverLawyerOrder(userId, req.params.orderId, req.file);
+      if (!result) return res.status(404).json({ error: 'Order not found' });
+      res.json(result);
+    } catch (err) {
+      return res.status(err.status || 400).json({ error: err.message });
+    }
   }));
 
   router.post('/orders/:orderId/esign', authMiddleware, asyncHandler(async (req, res) => {
