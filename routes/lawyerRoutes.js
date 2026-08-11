@@ -252,20 +252,12 @@ export function createLawyerRouter(lexApiUrl, uploadsDir = 'uploads/') {
     if (!userId) return;
 
     const queryText = req.body.query || req.body.message || '';
-    const response = await fetch(`${lexApiUrl}/api/v1/lex/chat/`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        message: queryText,
-        session_key: `lawyer-${userId}-${Date.now()}`
-      })
+    const { runLexChat } = await import('../services/lex/lexPipeline.js');
+    const data = await runLexChat({
+      message: queryText,
+      session_key: req.body.session_key || req.body.sessionKey,
+      persist: false,
     });
-
-    if (!response.ok) {
-      return res.status(502).json({ error: 'LEX AI service unavailable' });
-    }
-
-    const data = await response.json();
     await pro.incrementLawyerLexUsage(userId);
 
     res.json({
@@ -274,7 +266,7 @@ export function createLawyerRouter(lexApiUrl, uploadsDir = 'uploads/') {
       text: data.response,
       sources: data.sources || [],
       language: data.language,
-      showLawyer: data.show_lawyer
+      showLawyer: data.show_lawyer,
     });
   }));
 

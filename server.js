@@ -17,6 +17,7 @@ import { runSchema } from './db/schema.js';
 import { seedDatabase } from './db/seed.js';
 import { ensureLibrarySchema } from './db/ensureLibrarySchema.js';
 import { ensureAppointmentsSchema } from './db/ensureAppointmentsSchema.js';
+import { ensureLexSchema } from './db/ensureLexSchema.js';
 import * as repo from './db/repository.js';
 import * as authRepo from './db/auth.js';
 import { asyncHandler } from './shared/lib/asyncHandler.js';
@@ -85,7 +86,7 @@ const corsOrigins = (process.env.FRONTEND_URLS || 'http://localhost:5175,http://
 app.use(cors({
   origin: process.env.CORS_ALLOW_ALL === 'true' ? true : corsOrigins,
   credentials: true,
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Client-Role', 'X-Workspace-Context', 'ngrok-skip-browser-warning']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Client-Role', 'X-Workspace-Context', 'X-Lex-Owner', 'ngrok-skip-browser-warning']
 }));
 app.use(express.json());
 app.use('/uploads', express.static(UPLOADS_DIR));
@@ -95,6 +96,7 @@ app.use(asyncHandler(async (_req, _res, next) => {
   if (IS_VERCEL) {
     await ensureLibrarySchema();
     await ensureAppointmentsSchema();
+    await ensureLexSchema();
   }
   next();
 }));
@@ -754,26 +756,55 @@ async function proxyToLexAi(req, res, djangoPath) {
   }
 }
 
-app.post('/api/v1/lex/chat/', asyncHandler(async (req, res) => {
-  if (LEX_MODE === 'inline') {
-    const result = await runLexChat(req.body || {});
-    return res.json(result);
-  }
-  await proxyToLexAi(req, res, '/api/v1/lex/chat/');
+function lexOwnerFromReq(req) {
+  const userId = req.user?.userId || req.user?.sub;
+  if (userId) return `user:${userId}`;
+  const raw = String(
+    req.headers['x-lex-owner'] || req.body?.owner_key || req.query?.owner_key || ''
+  ).trim();
+  return raw ? raw.slice(0, 200) : null;
+}
+
+app.post('/api/v1/lex/sessions/', optionalAuthMiddleware, asyncHandler(async (req, res) => {
+  const { createLexSession } = await import('./db/lexChatService.js');
+  const session = await createLexSession(lexOwnerFromReq(req), { title: req.body?.title });
+  res.status(201).json(session);
 }));
 
-app.get('/api/v1/lex/sessions/', asyncHandler(async (req, res) => {
-  if (LEX_MODE === 'inline') {
-    return res.json([]);
-  }
-  await proxyToLexAi(req, res, '/api/v1/lex/sessions/');
+app.get('/api/v1/lex/sessions/', optionalAuthMiddleware, asyncHandler(async (req, res) => {
+  const { listLexSessions } = await import('./db/lexChatService.js');
+  res.json(await listLexSessions(lexOwnerFromReq(req)));
 }));
 
-app.get('/api/v1/lex/sessions/:sessionKey/', asyncHandler(async (req, res) => {
-  if (LEX_MODE === 'inline') {
-    return res.json({ session_key: req.params.sessionKey, title: 'Chat', messages: [] });
+app.get('/api/v1/lex/sessions/:sessionKey/', optionalAuthMiddleware, asyncHandler(async (req, res) => {
+  const { getLexSession, LexChatError } = await import('./db/lexChatService.js');
+  try {
+    res.json(await getLexSession(req.params.sessionKey, lexOwnerFromReq(req)));
+  } catch (err) {
+    return res.status(err instanceof LexChatError ? err.status : 400).json({ error: err.message });
   }
-  await proxyToLexAi(req, res, `/api/v1/lex/sessions/${req.params.sessionKey}/`);
+}));
+
+app.delete('/api/v1/lex/sessions/:sessionKey/', optionalAuthMiddleware, asyncHandler(async (req, res) => {
+  const { deleteLexSession, LexChatError } = await import('./db/lexChatService.js');
+  try {
+    res.json(await deleteLexSession(req.params.sessionKey, lexOwnerFromReq(req)));
+  } catch (err) {
+    return res.status(err instanceof LexChatError ? err.status : 400).json({ error: err.message });
+  }
+}));
+
+app.post('/api/v1/lex/chat/', optionalAuthMiddleware, asyncHandler(async (req, res) => {
+  try {
+    const result = await runLexChat({
+      ...(req.body || {}),
+      owner_key: lexOwnerFromReq(req) || req.body?.owner_key,
+      userId: req.user?.userId || req.user?.sub || null,
+    });
+    res.json(result);
+  } catch (err) {
+    return res.status(err.status || 400).json({ error: err.message });
+  }
 }));
 
 // ─── Health check ───────────────────────────────────────────────────────────

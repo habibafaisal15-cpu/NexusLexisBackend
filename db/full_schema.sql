@@ -485,6 +485,18 @@ CREATE TABLE IF NOT EXISTS notifications (
 CREATE INDEX IF NOT EXISTS idx_notifications_unread
     ON notifications (user_id) WHERE is_read IS FALSE;
 
+CREATE TABLE IF NOT EXISTS lex_sessions (
+    id BIGSERIAL PRIMARY KEY,
+    session_key VARCHAR(255) UNIQUE NOT NULL,
+    owner_key VARCHAR(255) NOT NULL,
+    title VARCHAR(255) NOT NULL DEFAULT 'New chat',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_lex_sessions_owner
+    ON lex_sessions (owner_key, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS lex_ai_chat_logs (
     id BIGSERIAL PRIMARY KEY,
     session_id VARCHAR(255) NOT NULL,

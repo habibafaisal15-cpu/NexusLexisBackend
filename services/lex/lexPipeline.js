@@ -69,12 +69,35 @@ function urgencyFlag(message) {
   return keywords.some((kw) => lower.includes(kw));
 }
 
-export async function runLexChat({ message }) {
+export async function runLexChat({ message, session_key: sessionKey, owner_key: ownerKey, userId = null, persist = true } = {}) {
   const userMessage = String(message || '').trim();
   if (!userMessage) throw new Error('Message is required');
 
   const lang = detectLanguage(userMessage);
   const register = /section|act|دفعہ|crpc|ppc/i.test(userMessage) ? 'LEGAL' : 'PLAIN';
+  const { saveLexTurn, getRecentTurns } = await import('../../db/lexChatService.js');
+
+  async function finish(payload) {
+    if (!persist) {
+      return { ...payload, session_key: sessionKey || null, owner_key: ownerKey || null, title: null };
+    }
+    const saved = await saveLexTurn({
+      sessionKey,
+      ownerKey,
+      userId,
+      question: userMessage,
+      response: payload.response,
+      language: payload.language,
+      register: payload.register,
+      showLawyer: payload.show_lawyer,
+    });
+    return {
+      ...payload,
+      session_key: saved.session_key,
+      owner_key: saved.owner_key,
+      title: saved.title,
+    };
+  }
 
   // STEP 1 — Intro (Hi, Hello, Who are you)
   const intro = searchIntroQa(userMessage);
@@ -84,19 +107,28 @@ export async function runLexChat({ message }) {
       ur: intro.item.answer_ur || intro.item.ur,
       roman: intro.item.answer_roman || intro.item.roman,
     }, lang);
-    return buildResponse(text, lang);
+    return finish(buildResponse(text, lang));
   }
 
   // STEP 2 — Law-topic guard
   if (!isLawRelated(userMessage)) {
-    return buildResponse(offTopicMessage(lang), lang);
+    return finish(buildResponse(offTopicMessage(lang), lang));
   }
 
   const apiKey = process.env.GEMINI_API_KEY;
   const model = process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite';
   if (!apiKey) {
-    return buildResponse(unavailableMessage(lang), lang);
+    return finish(buildResponse(unavailableMessage(lang), lang));
   }
+
+  const prior = sessionKey ? await getRecentTurns(sessionKey, 5) : [];
+  const conversation = [
+    ...prior.flatMap((turn) => [
+      { role: 'user', content: turn.question },
+      { role: 'assistant', content: turn.response },
+    ]),
+    { role: 'user', content: userMessage },
+  ];
 
   const genConfig = {
     maxTokens: Number(process.env.LLM_MAX_TOKENS || 500),
@@ -116,10 +148,10 @@ export async function runLexChat({ message }) {
         + `Similarity score: ${bank.score.toFixed(3)}`
       );
       const aiResponse = await geminiChatCompletion(
-        [{ role: 'user', content: userMessage }],
+        conversation,
         { ...genConfig, system }
       );
-      return buildResponse(aiResponse, lang, register, urgencyFlag(userMessage));
+      return finish(buildResponse(aiResponse, lang, register, urgencyFlag(userMessage)));
     }
 
     // STEP 4 — Law-related but not in sheet → Gemini directly
@@ -130,12 +162,12 @@ export async function runLexChat({ message }) {
       + 'and suggest consulting a verified lawyer for case-specific advice.'
     );
     const aiResponse = await geminiChatCompletion(
-      [{ role: 'user', content: userMessage }],
+      conversation,
       { ...genConfig, system }
     );
-    return buildResponse(aiResponse, lang, register, urgencyFlag(userMessage));
+    return finish(buildResponse(aiResponse, lang, register, urgencyFlag(userMessage)));
   } catch (err) {
     console.error('[lex-inline] Pipeline error:', err.message);
-    return buildResponse(unavailableMessage(lang), lang);
+    return finish(buildResponse(unavailableMessage(lang), lang));
   }
 }
