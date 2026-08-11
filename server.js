@@ -71,6 +71,8 @@ app.get('/', (_req, res) => {
       knowledgeDownload: 'GET /api/v2/knowledge-bank/templates/:slug/download',
       documents: 'GET /api/v2/documents',
       adminCreateTemplate: 'POST /api/v2/admin/library/templates',
+      adminAppointments: 'GET /api/v2/admin/appointments',
+      adminPatchAppointment: 'PATCH /api/v2/admin/appointments/:id',
     },
   });
 });
@@ -387,6 +389,25 @@ app.get('/api/v2/knowledge-bank/templates/:slug/download', asyncHandler(async (r
 }));
 
 app.use('/api/v2/admin/library', createAdminLibraryRouter());
+
+app.get('/api/v2/admin/appointments', authMiddleware, adminMiddleware, asyncHandler(async (req, res) => {
+  const { listAdminAppointments } = await import('./db/appointmentService.js');
+  res.json(await listAdminAppointments({
+    status: req.query.status,
+    source: req.query.source,
+    lawyerProfileId: req.query.lawyerProfileId,
+  }));
+}));
+
+app.patch('/api/v2/admin/appointments/:appointmentId', authMiddleware, adminMiddleware, asyncHandler(async (req, res) => {
+  const { patchAdminAppointment, AppointmentError } = await import('./db/appointmentService.js');
+  try {
+    res.json(await patchAdminAppointment(req.params.appointmentId, req.body || {}));
+  } catch (err) {
+    const status = err instanceof AppointmentError ? err.status : (err.status || 400);
+    return res.status(status).json({ error: err.message, ...(err.extra || {}) });
+  }
+}));
 
 // TEMPORARY testing APIs — remove after QA. Admin can add/delete documents freely.
 app.get('/api/v2/admin/documents', authMiddleware, adminMiddleware, asyncHandler(async (req, res) => {

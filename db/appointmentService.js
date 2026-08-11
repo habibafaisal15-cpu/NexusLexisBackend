@@ -586,6 +586,55 @@ export async function listClientAppointments(clientId) {
   };
 }
 
+export async function listAdminAppointments({ status, source, lawyerProfileId } = {}) {
+  const params = [];
+  const where = [];
+  if (status) {
+    params.push(normalizeAppointmentStatus(status));
+    where.push(`a.status = $${params.length}`);
+  }
+  if (source) {
+    params.push(String(source));
+    where.push(`a.source = $${params.length}`);
+  }
+  if (lawyerProfileId) {
+    params.push(Number(lawyerProfileId));
+    where.push(`a.lawyer_prof_id = $${params.length}`);
+  }
+
+  const result = await query(
+    `SELECT a.*, lp.full_name AS lawyer_name, lp.id AS lawyer_prof_id,
+            u.username AS client_name, u.email AS client_email, u.phone AS client_phone
+     FROM appointments a
+     JOIN lawyer_profiles lp ON lp.id = a.lawyer_prof_id
+     JOIN users u ON u.id = a.client_id
+     ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+     ORDER BY a.appointment_date DESC, a.appointment_time DESC
+     LIMIT 500`,
+    params
+  );
+
+  return {
+    appointments: result.rows.map((row) => ({
+      ...mapLawyerAppointmentRow(row),
+      lawyerName: row.lawyer_name,
+    })),
+  };
+}
+
+export async function patchAdminAppointment(appointmentId, body = {}) {
+  const existing = await query(
+    `SELECT a.*, lp.full_name AS lawyer_name, lp.id AS lawyer_prof_id
+     FROM appointments a
+     JOIN lawyer_profiles lp ON lp.id = a.lawyer_prof_id
+     WHERE a.id = $1`,
+    [appointmentId]
+  );
+  const row = existing.rows[0];
+  if (!row) throw new AppointmentError('Appointment not found', 404);
+  return patchLawyerAppointment(row.lawyer_prof_id, appointmentId, body);
+}
+
 export async function listLawyerAppointments(lawyerProfId) {
   const result = await query(
     `SELECT a.*, lp.full_name AS lawyer_name, lp.id AS lawyer_prof_id,

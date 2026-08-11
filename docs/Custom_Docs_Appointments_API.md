@@ -21,6 +21,8 @@ Demo: `client@nexuslexis.law` / `password123` · `lawyer@nexuslexis.law` / `pass
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET | `/lawyers/:lawyerProfileId/availability?date=YYYY-MM-DD` | Real date-based free/busy slots |
+| GET | `/admin/appointments` | Admin: list all bookings (optional `status`, `source`, `lawyerProfileId`) |
+| PATCH | `/admin/appointments/:id` | Admin: `{ status, responseNote, slot, date }` — same status rules as lawyer PATCH |
 | GET | `/lawyer/availability` | Lawyer weekly template + overrides |
 | PUT | `/lawyer/availability` | Update weekly template + date overrides |
 | POST | `/lawyer/appointments/:appointmentId/deliver` | Upload finished custom draft → My Documents |

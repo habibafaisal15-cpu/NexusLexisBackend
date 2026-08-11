@@ -18,4 +18,5 @@ lex_backend/db.sqlite3
 lex_backend/**/db.sqlite3
 nexuslexis3.0/
 nexus_lexus_project/
+nexuslexis-frontend/
 .vercel
