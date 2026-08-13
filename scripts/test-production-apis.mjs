@@ -290,10 +290,15 @@ async function run() {
   r = await req('GET', `${MAIN}/api/v2/library/catalog`);
   const catalogOk = r.ok === true;
   const categories = r.data?.categories || [];
-  for (const cat of categories) {
-    if (cat.templates?.[0]?.slug) {
-      librarySlug = cat.templates[0].slug;
-      break;
+  librarySlug = r.data?.documents?.[0]?.slug
+    || r.data?.templates?.[0]?.slug
+    || null;
+  if (!librarySlug) {
+    for (const cat of categories) {
+      if (cat.templates?.[0]?.slug) {
+        librarySlug = cat.templates[0].slug;
+        break;
+      }
     }
   }
   record('Main GET /library/catalog', catalogOk, r.ms,

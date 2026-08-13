@@ -1,6 +1,6 @@
 import { query } from './index.js';
 
-export const ALLOWED_APPT_STATUSES = ['pending', 'confirmed', 'completed', 'cancelled', 'rescheduled', 'no_show'];
+export const ALLOWED_APPT_STATUSES = ['pending', 'confirmed', 'completed', 'cancelled', 'rescheduled', 'no_show', 'in_progress'];
 export const ALLOWED_APPT_MODES = ['online', 'inperson', 'document', 'video', 'audio', 'chat'];
 export const DEFAULT_SLOT_TIMES = ['10:00', '11:30', '14:00', '16:00'];
 const WEEKDAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
@@ -40,11 +40,14 @@ export function normalizeAppointmentStatus(status) {
     no_show: 'no_show',
     noshow: 'no_show',
     'no-show': 'no_show',
+    in_progress: 'in_progress',
+    inprogress: 'in_progress',
+    'in-progress': 'in_progress',
   };
   const dbStatus = map[raw.toLowerCase()];
   if (!dbStatus) {
     throw new AppointmentError('Invalid appointment status', 400, {
-      allowed: ['pending', 'confirmed', 'Accepted', 'cancelled', 'Rejected', 'completed', 'rescheduled', 'no_show'],
+      allowed: ['pending', 'confirmed', 'Accepted', 'cancelled', 'Rejected', 'completed', 'rescheduled', 'no_show', 'in_progress'],
     });
   }
   return dbStatus;
@@ -58,6 +61,7 @@ export function appointmentStatusLabel(status) {
     cancelled: 'Cancelled',
     rescheduled: 'Rescheduled',
     no_show: 'NoShow',
+    in_progress: 'InProgress',
   };
   return map[status] || status;
 }
@@ -437,6 +441,11 @@ export async function bookLawyerAppointment(clientId, body = {}, files = []) {
     throw new AppointmentError('You cannot book a consultation with yourself');
   }
 
+  const feeRow = await query(
+    `SELECT online_fee, inperson_fee FROM lawyer_profiles WHERE id = $1`,
+    [lawyerRow.id]
+  );
+
   const { date, time } = parseAppointmentSlot(body);
   if (await isSlotTaken(lawyerRow.id, date, time)) {
     throw new AppointmentError('This slot is no longer available', 409);
@@ -472,15 +481,46 @@ export async function bookLawyerAppointment(clientId, body = {}, files = []) {
     url: item.url || null,
   }));
 
+  const clientNameResultEarly = await query('SELECT username FROM users WHERE id = $1', [clientId]);
+  const clientNameEarly = clientNameResultEarly.rows[0]?.username || 'Client';
+  const assignedAt = new Date();
+  const feeAmount = Number(
+    mode === 'inperson'
+      ? (feeRow.rows[0]?.inperson_fee ?? 0)
+      : (feeRow.rows[0]?.online_fee ?? 0)
+  ) || null;
+  const { initialOversightFields } = await import('./adminAppointmentOversight.js');
+  const oversight = initialOversightFields({
+    lawyerRow,
+    mode,
+    source,
+    fee: feeAmount,
+    assignedAt,
+    clientName: clientNameEarly,
+    professionalName: lawyerRow.full_name,
+  });
+
   const insert = await query(
     `INSERT INTO appointments (
        client_id, lawyer_prof_id, appointment_date, appointment_time, mode, status, client_notes,
        source, category_id, category_label, subject, service_area, matter_note, language, client_city,
-       attachments, brief
+       attachments, brief,
+       fee, currency, duration_minutes,
+       payment_status, refund_status, remittance_status,
+       assignment_status, assigned_at, reassignment_required,
+       meeting_status, join_status,
+       acceptance_window_hours, acceptance_deadline,
+       timeline, audit, created_at, updated_at
      ) VALUES (
        $1, $2, $3, $4::time, $5, 'pending', $6,
        $7, $8, $9, $10, $11, $12, $13, $14,
-       $15::jsonb, $16::jsonb
+       $15::jsonb, $16::jsonb,
+       $17, $18, $19,
+       $20, $21, $22,
+       $23, $24, FALSE,
+       $25, $26,
+       $27, $28,
+       $29::jsonb, $30::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
      )
      RETURNING *`,
     [
@@ -508,6 +548,20 @@ export async function bookLawyerAppointment(clientId, body = {}, files = []) {
         language: body.language || null,
         city: clientCity,
       }),
+      oversight.fee,
+      oversight.currency,
+      oversight.duration_minutes,
+      oversight.payment_status,
+      oversight.refund_status,
+      oversight.remittance_status,
+      oversight.assignment_status,
+      oversight.assigned_at,
+      oversight.meeting_status,
+      oversight.join_status,
+      oversight.acceptance_window_hours,
+      oversight.acceptance_deadline,
+      JSON.stringify(oversight.timeline),
+      JSON.stringify(oversight.audit),
     ]
   );
 
@@ -518,8 +572,7 @@ export async function bookLawyerAppointment(clientId, body = {}, files = []) {
   );
 
   const slotLabel = `${date} at ${formatTimeLabel(time)}`;
-  const clientNameResult = await query('SELECT username FROM users WHERE id = $1', [clientId]);
-  const clientName = clientNameResult.rows[0]?.username || 'Client';
+  const clientName = clientNameEarly;
   const modeText = modeLabel(mode).toLowerCase();
 
   await notify(clientId, {
@@ -586,43 +639,12 @@ export async function listClientAppointments(clientId) {
   };
 }
 
-export async function listAdminAppointments({ status, source, lawyerProfileId } = {}) {
-  const params = [];
-  const where = [];
-  if (status) {
-    params.push(normalizeAppointmentStatus(status));
-    where.push(`a.status = $${params.length}`);
-  }
-  if (source) {
-    params.push(String(source));
-    where.push(`a.source = $${params.length}`);
-  }
-  if (lawyerProfileId) {
-    params.push(Number(lawyerProfileId));
-    where.push(`a.lawyer_prof_id = $${params.length}`);
-  }
-
-  const result = await query(
-    `SELECT a.*, lp.full_name AS lawyer_name, lp.id AS lawyer_prof_id,
-            u.username AS client_name, u.email AS client_email, u.phone AS client_phone
-     FROM appointments a
-     JOIN lawyer_profiles lp ON lp.id = a.lawyer_prof_id
-     JOIN users u ON u.id = a.client_id
-     ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-     ORDER BY a.appointment_date DESC, a.appointment_time DESC
-     LIMIT 500`,
-    params
-  );
-
-  return {
-    appointments: result.rows.map((row) => ({
-      ...mapLawyerAppointmentRow(row),
-      lawyerName: row.lawyer_name,
-    })),
-  };
+export async function listAdminAppointments(filters = {}) {
+  const { listAdminAppointmentsOversight } = await import('./adminAppointmentOversight.js');
+  return listAdminAppointmentsOversight(filters);
 }
 
-export async function patchAdminAppointment(appointmentId, body = {}) {
+export async function patchAdminAppointment(appointmentId, body = {}, adminActor = {}) {
   const existing = await query(
     `SELECT a.*, lp.full_name AS lawyer_name, lp.id AS lawyer_prof_id
      FROM appointments a
@@ -632,7 +654,17 @@ export async function patchAdminAppointment(appointmentId, body = {}) {
   );
   const row = existing.rows[0];
   if (!row) throw new AppointmentError('Appointment not found', 404);
-  return patchLawyerAppointment(row.lawyer_prof_id, appointmentId, body);
+  const result = await patchLawyerAppointment(row.lawyer_prof_id, appointmentId, body, {
+    actorType: 'admin',
+    actorName: adminActor.name || adminActor.email || 'Admin',
+  });
+  const { getAdminAppointmentById } = await import('./adminAppointmentOversight.js');
+  try {
+    const detail = await getAdminAppointmentById(appointmentId);
+    return { ...result, appointment: detail.appointment, success: true };
+  } catch {
+    return result;
+  }
 }
 
 export async function listLawyerAppointments(lawyerProfId) {
@@ -649,7 +681,7 @@ export async function listLawyerAppointments(lawyerProfId) {
   return { appointments: result.rows.map(mapLawyerAppointmentRow) };
 }
 
-export async function patchLawyerAppointment(lawyerProfId, appointmentId, body = {}) {
+export async function patchLawyerAppointment(lawyerProfId, appointmentId, body = {}, actor = {}) {
   const existing = await query(
     `SELECT a.*, lp.full_name AS lawyer_name, lp.user_id AS lawyer_user_id
      FROM appointments a
@@ -693,9 +725,33 @@ export async function patchLawyerAppointment(lawyerProfId, appointmentId, body =
 
   params.push(row.id, lawyerProfId);
   await query(
-    `UPDATE appointments SET ${sets.join(', ')} WHERE id = $${params.length - 1} AND lawyer_prof_id = $${params.length}`,
+    `UPDATE appointments SET ${sets.join(', ')}, updated_at = CURRENT_TIMESTAMP
+     WHERE id = $${params.length - 1} AND lawyer_prof_id = $${params.length}`,
     params
   );
+
+  const nextStatus = body.status !== undefined
+    ? normalizeAppointmentStatus(body.status)
+    : (body.slot || body.date || body.timeSlot ? 'rescheduled' : row.status);
+
+  const actorType = actor.actorType || 'professional';
+  const actorName = actor.actorName || row.lawyer_name || 'Professional';
+  const { appendAppointmentAudit, appendAppointmentTimeline } = await import('./adminAppointmentOversight.js');
+  await appendAppointmentAudit(row.id, {
+    action: `Status → ${appointmentStatusLabel(nextStatus)}`,
+    performedBy: actorName,
+    actorType,
+    meta: body.responseNote ? { responseNote: body.responseNote } : undefined,
+  });
+  if (nextStatus === 'confirmed') {
+    await appendAppointmentTimeline(row.id, [
+      { label: 'Accepted by Professional', state: 'done' },
+    ]);
+  } else if (nextStatus === 'completed') {
+    await appendAppointmentTimeline(row.id, [
+      { label: 'Completed', state: 'done' },
+    ]);
+  }
 
   const updated = await query(
     `SELECT a.*, lp.full_name AS lawyer_name, lp.id AS lawyer_prof_id,
@@ -707,7 +763,6 @@ export async function patchLawyerAppointment(lawyerProfId, appointmentId, body =
     [row.id]
   );
 
-  const nextStatus = body.status !== undefined ? normalizeAppointmentStatus(body.status) : updated.rows[0].status;
   await notify(row.client_id, {
     title: 'Appointment Update',
     body: `Your consultation is now ${appointmentStatusLabel(nextStatus)}.`,

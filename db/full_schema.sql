@@ -283,7 +283,7 @@ CREATE TABLE IF NOT EXISTS appointments (
     appointment_time TIME NOT NULL,
     mode VARCHAR(20) CHECK (mode IN ('online', 'inperson', 'document', 'video', 'audio', 'chat')),
     status VARCHAR(20) DEFAULT 'pending'
-        CHECK (status IN ('pending', 'confirmed', 'completed', 'cancelled', 'rescheduled', 'no_show')),
+        CHECK (status IN ('pending', 'confirmed', 'completed', 'cancelled', 'rescheduled', 'no_show', 'in_progress')),
     meeting_link VARCHAR(500),
     source VARCHAR(50) DEFAULT 'consultation',
     category_id VARCHAR(100),
@@ -296,7 +296,28 @@ CREATE TABLE IF NOT EXISTS appointments (
     response_note TEXT,
     attachments JSONB NOT NULL DEFAULT '[]'::jsonb,
     delivered_order_number VARCHAR(100),
-    brief JSONB NOT NULL DEFAULT '{}'::jsonb
+    brief JSONB NOT NULL DEFAULT '{}'::jsonb,
+    fee DECIMAL(12, 2),
+    currency VARCHAR(10) DEFAULT 'PKR',
+    duration_minutes INT,
+    payment_status VARCHAR(30) DEFAULT 'pending',
+    payment_transaction_id VARCHAR(120),
+    payment_date TIMESTAMPTZ,
+    refund_status VARCHAR(30) DEFAULT 'none',
+    remittance_status VARCHAR(30) DEFAULT 'not_applicable',
+    assignment_status VARCHAR(40) DEFAULT 'assigned',
+    assigned_at TIMESTAMPTZ,
+    reassignment_required BOOLEAN DEFAULT FALSE,
+    reassignment_reason VARCHAR(80),
+    original_professional JSONB,
+    meeting_status VARCHAR(30) DEFAULT 'scheduled',
+    join_status VARCHAR(30) DEFAULT 'not_started',
+    acceptance_window_hours INT DEFAULT 24,
+    acceptance_deadline TIMESTAMPTZ,
+    timeline JSONB NOT NULL DEFAULT '[]'::jsonb,
+    audit JSONB NOT NULL DEFAULT '[]'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_appointments_slots_lookup

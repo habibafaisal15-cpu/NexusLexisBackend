@@ -9,15 +9,15 @@ from collections import Counter
 from django.conf import settings
 from .models import LexAISystemPrompt, LexChatHistory, ConversationSession
 from .intro_qa import LEX_INTRO_QA
-from .llm_client import chat_completion, LLMConnectionError, check_ollama_health
+from .llm_client import chat_completion, LLMConnectionError, check_llm_health
 from .law_guard import keyword_law_check
 
 # ==========================================
 # 1. INITIALIZATION, TF-IDF ENGINE & GLOBAL CACHE
 # ==========================================
 
-# Direct Public Download link for your targeted Live Document Excel Sheet
-EXCEL_DOWNLOAD_URL = "https://docs.google.com/spreadsheets/d/1jbWsT2dzag38-F97tnqW9S0YdtZnbiiv/export?format=xlsx"
+# Google Sheets public export URL — set LEX_QUESTION_BANK_URL in .env for your sheet
+EXCEL_DOWNLOAD_URL = settings.LEX_QUESTION_BANK_URL
 
 ENGLISH_STOP_WORDS = {
     'a', 'about', 'above', 'after', 'again', 'against', 'all', 'am', 'an', 'and', 'any', 'are', 'aren', "aren't",
@@ -256,13 +256,11 @@ def get_optimized_rag_matrix():
         file_stream = io.BytesIO(response.content)
         df = pd.read_excel(file_stream, sheet_name='Question Bank', skiprows=1)
 
-        # Index 1 = Column B (Questions Text Verbatim)
-        question_col = df.columns[1]
+        # Column C = Question Text, Column M = Notes (lawyer answers)
+        question_col = df.columns[2] if len(df.columns) > 2 else df.columns[1]
         
-        # Clean structural validation (drop rows where question is completely empty)
         df_clean = df.dropna(subset=[question_col]).copy()
         
-        # Index 12 = Column M (Answers written by lawyers)
         if len(df_clean.columns) > 12:
             answer_col = df_clean.columns[12]
             df_clean[answer_col] = df_clean[answer_col].fillna("").astype(str)
@@ -291,7 +289,7 @@ def get_optimized_rag_matrix():
         return _CACHED_NUMPY_MATRIX, _CACHED_TFIDF
 
 
-def search_question_bank_numpy(user_message: str) -> tuple:
+def search_question_bank_numpy(user_message: str) -> dict:
     """
     Scans the automatically sync'd NumPy array using TF-IDF similarity.
     Allows matching queries even if wording or word order is changed.
@@ -299,18 +297,24 @@ def search_question_bank_numpy(user_message: str) -> tuple:
     _, tfidf = get_optimized_rag_matrix()
     
     if tfidf is None:
-        return None, False
+        return {"found": False, "answer": None, "question": None, "score": 0.0}
 
-    # Retrieve matching document using cosine similarity threshold of 0.40
     answer, found, score = tfidf.search(user_message, threshold=BANK_QA_THRESHOLD)
     if found and not str(answer or "").strip():
         print(f"--- RAG MATCH SKIPPED: empty answer (score: {score:.4f}) ---")
-        return None, False
+        return {"found": False, "answer": None, "question": None, "score": score}
     if found:
+        question = None
+        if hasattr(tfidf, 'answers') and hasattr(tfidf, 'documents'):
+            try:
+                idx = tfidf.answers.index(answer)
+                question = tfidf.documents[idx]
+            except ValueError:
+                question = None
         print(f"--- RAG SEMANTIC MATCH TRIGGERED (Cosine Similarity Score: {score:.4f}) ---")
-        return answer, True
+        return {"found": True, "answer": answer, "question": question, "score": score}
             
-    return None, False
+    return {"found": False, "answer": None, "question": None, "score": score}
 
 
 # ==========================================
@@ -325,8 +329,7 @@ def check_if_law_related(user_message: str) -> bool:
     keyword_result = keyword_law_check(user_message)
     if keyword_result is not None:
         return keyword_result
-    # Ambiguous text on a legal platform — allow through to LLM rather than blocking
-    return True
+    return False
 
 
 def build_conversational_history(session_key: str, current_message: str, limit: int = 5) -> list:
@@ -361,7 +364,7 @@ def run_lex_rag_pipeline(user_message: str, session_key: str) -> dict:
     1. Built-in intro Q&A
     2. Excel question bank (semantic TF-IDF)
     3. Law-topic guardrail (only before AI generation)
-    4. Qwen fallback (Ollama)
+    4. Gemini / Ollama fallback when no sheet match
     """
     is_urdu = any(u'\u0600' <= c <= u'\u06FF' for c in user_message)
     detected_lang = "UR" if is_urdu else "EN"
@@ -376,7 +379,7 @@ def run_lex_rag_pipeline(user_message: str, session_key: str) -> dict:
         session_obj.title = user_message[:50] + "..." if len(user_message) > 50 else user_message
         session_obj.save()
 
-    # STEP 2: Built-in LEX introductory Q&A, then external sheet bank (before guardrail)
+    # STEP 2: Intro Q&A
     intro_answer, intro_found = search_intro_qa(user_message)
     if intro_found:
         response_text = intro_answer["ur"] if detected_lang == "UR" else intro_answer["en"]
@@ -395,24 +398,7 @@ def run_lex_rag_pipeline(user_message: str, session_key: str) -> dict:
             "show_lawyer": False
         }
 
-    bank_answer, found = search_question_bank_numpy(user_message)
-    if found:
-        LexChatHistory.objects.create(
-            session_key=session_key,
-            user_message=user_message,
-            ai_response=bank_answer,
-            language=detected_lang,
-            register=detected_register,
-            show_lawyer=False
-        )
-        return {
-            "response": bank_answer,
-            "language": detected_lang,
-            "register": detected_register,
-            "show_lawyer": False
-        }
-
-    # STEP 3: Law-topic filter — only for AI generation fallback
+    # STEP 3: Law-topic filter
     if not check_if_law_related(user_message):
         LexChatHistory.objects.create(
             session_key=session_key,
@@ -429,11 +415,10 @@ def run_lex_rag_pipeline(user_message: str, session_key: str) -> dict:
             "show_lawyer": False
         }
 
-    # STEP 4: Fallback Prompt Assembly
     active_prompt_record = LexAISystemPrompt.objects.first()
     system_instruction = active_prompt_record.prompt_text if active_prompt_record else "You are Lex, a legal information assistant."
 
-    enforced_system_context = (
+    base_system = (
         f"{system_instruction}\n\n"
         "CRITICAL INSTRUCTION: If the user asks about exact company registration fees, corporate tax setup costs, "
         "or IP filing fees, do NOT quote specific currency figures. Explicitly direct them to use the "
@@ -443,21 +428,63 @@ def run_lex_rag_pipeline(user_message: str, session_key: str) -> dict:
 
     conversation_payload = build_conversational_history(session_key, user_message)
 
-    # STEP 5: Fallback to Qwen via Ollama (skip quickly if Ollama is down)
-    llm_health = check_ollama_health()
-    if not llm_health.get("ok") or not llm_health.get("model_available"):
+    llm_health = check_llm_health()
+    llm_ready = llm_health.get("ok")
+    if llm_ready and llm_health.get("provider") == "ollama":
+        llm_ready = llm_health.get("model_available", False)
+
+    # STEP 4: Sheet match → Gemini forms answer from reference
+    bank_match = search_question_bank_numpy(user_message)
+    if bank_match.get("found"):
+        reference = (
+            f"Reference Q: {bank_match.get('question') or 'N/A'}\n"
+            f"Reference A: {bank_match.get('answer')}"
+        )
+        grounded_system = (
+            f"{base_system}\n\nUse this VERIFIED REFERENCE as your primary source:\n{reference}\n"
+            "Form a clear answer. Do not invent facts beyond the reference."
+        )
+        if not llm_ready:
+            ai_response = bank_match.get("answer")
+        else:
+            try:
+                ai_response = chat_completion(
+                    conversation_payload,
+                    system=grounded_system,
+                    max_tokens=settings.LLM_MAX_TOKENS,
+                    timeout=settings.LLM_GENERATION_TIMEOUT,
+                )
+            except LLMConnectionError:
+                ai_response = bank_match.get("answer")
+
+        LexChatHistory.objects.create(
+            session_key=session_key,
+            user_message=user_message,
+            ai_response=ai_response,
+            language=detected_lang,
+            register=detected_register,
+            show_lawyer=False
+        )
+        return {
+            "response": ai_response,
+            "language": detected_lang,
+            "register": detected_register,
+            "show_lawyer": False
+        }
+
+    # STEP 5: No sheet match → Gemini directly
+    if not llm_ready:
         ai_response = LLM_UNAVAILABLE_UR if detected_lang == "UR" else LLM_UNAVAILABLE_EN
     else:
         try:
             ai_response = chat_completion(
                 conversation_payload,
-                system=enforced_system_context,
+                system=base_system,
                 max_tokens=settings.LLM_MAX_TOKENS,
-                model=settings.LLM_MODEL,
                 timeout=settings.LLM_GENERATION_TIMEOUT,
             )
         except LLMConnectionError as e:
-            print("--- QWEN / OLLAMA GENERATION ERROR ---")
+            print(f"--- LLM GENERATION ERROR ({llm_health.get('provider', 'unknown')}) ---")
             print(e)
             ai_response = LLM_UNAVAILABLE_UR if detected_lang == "UR" else LLM_UNAVAILABLE_EN
 

@@ -1,0 +1,24 @@
+name: NexusLexis Production
+values:
+  - key: auth_base
+    value: ''
+  - key: main_base
+    value: ''
+  - key: client_token
+    value: ''
+  - key: lawyer_token
+    secret: true
+  - key: admin_token
+    secret: true
+  - key: lawyer_user_id
+    value: ''
+  - key: lawyer_profile_id
+    value: ''
+  - key: doc_cnic_front
+    value: ''
+  - key: doc_profile_photo
+    value: ''
+  - key: appointment_id
+    value: ''
+  - key: thread_id
+    value: ''

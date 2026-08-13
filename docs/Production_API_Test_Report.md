@@ -77,19 +77,6 @@ VITE_LEX_API_BASE_URL=https://nexus-lexis-backend-ql8w.vercel.app/api/v1/lex
 4. **Library catalog** — response shape is `{ categories: [{ templates: [...] }], templateCount }`.
 5. **Admin panel** — base path is `/api/auth/admin/*` on Auth API, not `/api/admin/*`.
 
-## Latest test result: **51/54 passed**
+## Latest test result: **54/54 passed** (2026-08-10)
 
-Three failures are fixed in this repo but require **redeploy** to production:
-
-| Endpoint | Error | Fix |
-|----------|-------|-----|
-| `POST /api/auth/reset-password` | duplicate `users_username_key` | `auth_backend/db/userSync.js` — don't rename user on password reset |
-| `POST /api/v2/auth/session` | Demo client not configured | `db/repository.js` — default demo email → `client@nexuslexis.law` |
-| `GET /api/v2/documents` | `column so.created_at does not exist` | `db/repository.js` — removed missing column from query |
-
-After redeploying **Auth API** (45v4) and **Main API** (ql8w), re-run tests — expect **54/54 pass**.
-
-## Known issues (fixed in repo, deploy Main API to apply)
-
-- `GET /api/v2/documents` — was 500 (`column so.created_at does not exist`) — fixed in `db/repository.js`
-- `POST /api/v2/auth/session` — demo session used wrong default email — fixed (`client@nexuslexis.law`)
+Catalog pagination returns templates in top-level `documents[]` / `templates[]`; `categories[].templates` may be empty. The smoke test reads slug from `documents[0].slug`.

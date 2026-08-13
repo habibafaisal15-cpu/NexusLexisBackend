@@ -1,0 +1,66 @@
+$kind: http-example
+request:
+  url: "{{auth_base}}/api/auth/login"
+  method: POST
+  body:
+    type: json
+    content: "{\r
+
+      \  \"email\": \"admin@nexuslexis.law\",\r
+
+      \  \"password\": \"admin123\"\r
+
+      }"
+response:
+  statusCode: 200
+  statusText: OK
+  headers:
+    access-control-allow-credentials: "true"
+    cache-control: public, max-age=0, must-revalidate
+    content-encoding: br
+    content-type: application/json; charset=utf-8
+    date: Thu, 06 Aug 2026 00:37:03 GMT
+    etag: W/"507-AN+IGw9d5Efb3FFO0zL99M7BgPw"
+    server: Vercel
+    strict-transport-security: max-age=63072000; includeSubDomains; preload
+    vary: Origin
+    x-powered-by: Express
+    x-vercel-cache: MISS
+    x-vercel-id: bom1::iad1::599sd-1785976622770-ad0d19a13652
+    transfer-encoding: chunked
+  body:
+    type: json
+    content: |-
+      {
+        "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiI0Iiwic3ViIjoiNCIsIm5hbWUiOiJEZW1vIEFkbWluIiwiZW1haWwiOiJhZG1pbkBuZXh1c2xleGlzLmxhdyIsInJvbGUiOiJhZG1pbiIsImFjdGl2ZVJvbGUiOiJhZG1pbiIsInJvbGVzIjpbIkFkbWluIl0sImF1dGhQcm92aWRlciI6ImxvY2FsIiwiaWF0IjoxNzg1OTc2NjIzLCJleHAiOjE3ODYwNjMwMjN9.Bf66-nqJJ9VUpbHCGGXEEda1opx6QGVY62PPfvL7iJM",
+        "refreshToken": "4f19da15bdb124f77340bf43e02522b9539f1b48070a0189648f021b00d718e4",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiI0Iiwic3ViIjoiNCIsIm5hbWUiOiJEZW1vIEFkbWluIiwiZW1haWwiOiJhZG1pbkBuZXh1c2xleGlzLmxhdyIsInJvbGUiOiJhZG1pbiIsImFjdGl2ZVJvbGUiOiJhZG1pbiIsInJvbGVzIjpbIkFkbWluIl0sImF1dGhQcm92aWRlciI6ImxvY2FsIiwiaWF0IjoxNzg1OTc2NjIzLCJleHAiOjE3ODYwNjMwMjN9.Bf66-nqJJ9VUpbHCGGXEEda1opx6QGVY62PPfvL7iJM",
+        "expiresIn": "24h",
+        "refreshExpiresAt": "2026-09-05T00:37:03.170Z",
+        "user": {
+          "id": "4",
+          "name": "Demo Admin",
+          "email": "admin@nexuslexis.law",
+          "phone": null,
+          "role": "admin",
+          "authProvider": "local",
+          "roles": [
+            "Admin"
+          ],
+          "dashboardUserId": "4",
+          "profile": null,
+          "verificationStatus": "Approved",
+          "canAccessDashboard": true,
+          "nextStep": "dashboard",
+          "pendingVerificationRole": null
+        },
+        "accountAccess": {
+          "accountRole": "admin",
+          "verificationStatus": "Approved",
+          "canAccessDashboard": true,
+          "nextStep": "dashboard",
+          "message": null,
+          "pendingVerificationRole": null
+        }
+      }
+order: 1785976651060

@@ -16,8 +16,11 @@ class LexAiConfig(AppConfig):
                 print(f"[lex_ai] RAG cache warm-up skipped: {exc}")
 
         def _warm_llm():
+            from django.conf import settings as django_settings
+            if (getattr(django_settings, 'LLM_PROVIDER', 'gemini') or 'gemini').lower() != 'ollama':
+                return
             import time
-            time.sleep(15)  # let the server finish booting before loading the model
+            time.sleep(15)
             try:
                 from .llm_client import check_ollama_health, chat_completion
                 health = check_ollama_health()

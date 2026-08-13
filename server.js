@@ -73,7 +73,11 @@ app.get('/', (_req, res) => {
       documents: 'GET /api/v2/documents',
       adminCreateTemplate: 'POST /api/v2/admin/library/templates',
       adminAppointments: 'GET /api/v2/admin/appointments',
+      adminAppointmentStats: 'GET /api/v2/admin/appointments/stats',
+      adminAppointmentDetail: 'GET /api/v2/admin/appointments/:id',
       adminPatchAppointment: 'PATCH /api/v2/admin/appointments/:id',
+      adminReassignAppointment: 'POST /api/v2/admin/appointments/:id/reassign',
+      adminAssignableProfessionals: 'GET /api/v2/admin/assignable-professionals',
     },
   });
 });
@@ -392,19 +396,75 @@ app.get('/api/v2/knowledge-bank/templates/:slug/download', asyncHandler(async (r
 
 app.use('/api/v2/admin/library', createAdminLibraryRouter());
 
+// NL-BE-ADMIN-OVERSIGHT-001 — Appointment Oversight (same appointments rows)
+app.get('/api/v2/admin/appointments/stats', authMiddleware, adminMiddleware, asyncHandler(async (req, res) => {
+  const { getAdminAppointmentStats } = await import('./db/adminAppointmentOversight.js');
+  res.json(await getAdminAppointmentStats());
+}));
+
+app.get('/api/v2/admin/assignable-professionals', authMiddleware, adminMiddleware, asyncHandler(async (req, res) => {
+  const { listAssignableProfessionals } = await import('./db/adminAppointmentOversight.js');
+  res.json(await listAssignableProfessionals({
+    professionalType: req.query.professionalType,
+    practiceArea: req.query.practiceArea,
+    city: req.query.city,
+    excludeProfileId: req.query.excludeProfileId,
+    search: req.query.search,
+  }));
+}));
+
+app.get('/api/v2/admin/appointments/:appointmentId', authMiddleware, adminMiddleware, asyncHandler(async (req, res) => {
+  const { getAdminAppointmentById } = await import('./db/adminAppointmentOversight.js');
+  const { AppointmentError } = await import('./db/appointmentService.js');
+  try {
+    res.json(await getAdminAppointmentById(req.params.appointmentId));
+  } catch (err) {
+    const status = err instanceof AppointmentError ? err.status : (err.status || 400);
+    return res.status(status).json({ error: err.message, ...(err.extra || {}) });
+  }
+}));
+
+app.post('/api/v2/admin/appointments/:appointmentId/reassign', authMiddleware, adminMiddleware, asyncHandler(async (req, res) => {
+  const { reassignAdminAppointment } = await import('./db/adminAppointmentOversight.js');
+  const { AppointmentError } = await import('./db/appointmentService.js');
+  try {
+    res.json(await reassignAdminAppointment(req.params.appointmentId, req.body || {}, {
+      name: req.user?.name || req.user?.email,
+      email: req.user?.email,
+    }));
+  } catch (err) {
+    const status = err instanceof AppointmentError ? err.status : (err.status || 400);
+    return res.status(status).json({ error: err.message, ...(err.extra || {}) });
+  }
+}));
+
 app.get('/api/v2/admin/appointments', authMiddleware, adminMiddleware, asyncHandler(async (req, res) => {
   const { listAdminAppointments } = await import('./db/appointmentService.js');
   res.json(await listAdminAppointments({
     status: req.query.status,
     source: req.query.source,
     lawyerProfileId: req.query.lawyerProfileId,
+    page: req.query.page,
+    limit: req.query.limit,
+    search: req.query.search,
+    paymentStatus: req.query.paymentStatus,
+    professionalType: req.query.professionalType,
+    mode: req.query.mode,
+    serviceArea: req.query.serviceArea,
+    assignmentStatus: req.query.assignmentStatus,
+    dateFrom: req.query.dateFrom,
+    dateTo: req.query.dateTo,
+    attentionOnly: req.query.attentionOnly,
   }));
 }));
 
 app.patch('/api/v2/admin/appointments/:appointmentId', authMiddleware, adminMiddleware, asyncHandler(async (req, res) => {
   const { patchAdminAppointment, AppointmentError } = await import('./db/appointmentService.js');
   try {
-    res.json(await patchAdminAppointment(req.params.appointmentId, req.body || {}));
+    res.json(await patchAdminAppointment(req.params.appointmentId, req.body || {}, {
+      name: req.user?.name || req.user?.email,
+      email: req.user?.email,
+    }));
   } catch (err) {
     const status = err instanceof AppointmentError ? err.status : (err.status || 400);
     return res.status(status).json({ error: err.message, ...(err.extra || {}) });

@@ -10,11 +10,15 @@ services:
         generateValue: true
       - key: DJANGO_DEBUG
         value: "False"
-      - key: LLM_BASE_URL
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: GEMINI_API_KEY
         sync: false
-      - key: LLM_MODEL
-        value: qwen2.5:7b-instruct
+      - key: GEMINI_MODEL
+        value: gemini-2.0-flash
+      - key: LEX_QUESTION_BANK_URL
+        sync: false
       - key: LLM_GENERATION_TIMEOUT
-        value: "120"
+        value: "60"
       - key: PYTHON_VERSION
         value: "3.12"

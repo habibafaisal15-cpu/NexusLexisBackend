@@ -78,13 +78,27 @@ USE_TZ = True
 STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# Local LLM — Qwen via Ollama (see lex_backend/.env.example)
+# LLM provider: gemini (production) | ollama (local dev)
+LLM_PROVIDER = os.environ.get('LLM_PROVIDER', 'gemini')
+
+# Google Gemini — https://aistudio.google.com/apikey
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
+GEMINI_MODEL = os.environ.get('GEMINI_MODEL', 'gemini-2.0-flash')
+
+# Ollama + Qwen (local only)
 LLM_BASE_URL = os.environ.get('LLM_BASE_URL', 'http://localhost:11434')
 LLM_MODEL = os.environ.get('LLM_MODEL', 'qwen2.5:7b-instruct')
 LLM_GUARD_MODEL = os.environ.get('LLM_GUARD_MODEL', LLM_MODEL)
+
+# Question bank spreadsheet (Google Sheets public export URL)
+LEX_QUESTION_BANK_URL = os.environ.get(
+    'LEX_QUESTION_BANK_URL',
+    'https://docs.google.com/spreadsheets/d/1I7F5GlelYco_LNzRHRrvjOjDEaJNnNhC/export?format=xlsx',
+)
+
 LLM_MAX_TOKENS = int(os.environ.get('LLM_MAX_TOKENS', '400'))
 LLM_TIMEOUT = int(os.environ.get('LLM_TIMEOUT', '120'))
 LLM_GUARD_TIMEOUT = int(os.environ.get('LLM_GUARD_TIMEOUT', '8'))
-LLM_GENERATION_TIMEOUT = int(os.environ.get('LLM_GENERATION_TIMEOUT', '120'))
+LLM_GENERATION_TIMEOUT = int(os.environ.get('LLM_GENERATION_TIMEOUT', '60'))
 
 APPEND_SLASH = False

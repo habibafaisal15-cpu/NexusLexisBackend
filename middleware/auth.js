@@ -7,7 +7,8 @@ const ROLE_EMAIL_MAP = {
   CorporateClient: 'client@nexuslexis.law',
   LegalAdvocate: 'lawyer@nexuslexis.law',
   CharteredAccountant: 'ca@nexuslexis.law',
-  Admin: 'admin@nexuslexis.law'
+  Admin: 'admin@nexuslexis.law',
+  RegistryStaff: 'admin@nexuslexis.law',
 };
 
 export function signToken(payload) {
@@ -77,7 +78,13 @@ export function getUserId(req) {
 
 export function adminMiddleware(req, res, next) {
   const role = req.user?.role || req.user?.activeRole;
-  if (role !== 'admin') {
+  const roles = Array.isArray(req.user?.roles) ? req.user.roles : [];
+  const header = String(req.headers['x-client-role'] || '');
+  const ok = role === 'admin'
+    || roles.includes('Admin')
+    || roles.includes('RegistryStaff')
+    || (req.mockAuth && (header === 'Admin' || header === 'RegistryStaff'));
+  if (!ok) {
     return res.status(403).json({ error: 'Admin access required' });
   }
   return next();
