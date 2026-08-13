@@ -822,7 +822,11 @@ function lexOwnerFromReq(req) {
   const raw = String(
     req.headers['x-lex-owner'] || req.body?.owner_key || req.query?.owner_key || ''
   ).trim();
-  return raw ? raw.slice(0, 200) : null;
+  if (raw) return raw.slice(0, 200);
+  const ip = String(
+    req.headers['x-forwarded-for'] || req.headers['x-real-ip'] || req.socket?.remoteAddress || 'unknown'
+  ).split(',')[0].trim();
+  return `guest_ip:${ip.slice(0, 120)}`;
 }
 
 app.post('/api/v1/lex/sessions/', optionalAuthMiddleware, asyncHandler(async (req, res) => {
@@ -856,14 +860,32 @@ app.delete('/api/v1/lex/sessions/:sessionKey/', optionalAuthMiddleware, asyncHan
 
 app.post('/api/v1/lex/chat/', optionalAuthMiddleware, asyncHandler(async (req, res) => {
   try {
+    const userId = req.user?.userId || req.user?.sub || null;
+    const ownerKey = lexOwnerFromReq(req);
+    const { assertGuestLexPromptAllowed, guestQuotaAfterSend } = await import('./db/lexChatService.js');
+
+    const quotaBefore = await assertGuestLexPromptAllowed({ userId, ownerKey });
     const result = await runLexChat({
       ...(req.body || {}),
-      owner_key: lexOwnerFromReq(req) || req.body?.owner_key,
-      userId: req.user?.userId || req.user?.sub || null,
+      owner_key: ownerKey,
+      userId,
     });
-    res.json(result);
+    res.json({
+      ...result,
+      ...guestQuotaAfterSend(quotaBefore),
+    });
   } catch (err) {
-    return res.status(err.status || 400).json({ error: err.message });
+    if (err.code === 'LEX_LOGIN_REQUIRED' || err.loginRequired) {
+      return res.status(401).json({
+        error: err.message,
+        code: 'LEX_LOGIN_REQUIRED',
+        loginRequired: true,
+        guestPromptLimit: err.guestPromptLimit,
+        guestPromptsUsed: err.guestPromptsUsed,
+        guestPromptsRemaining: 0,
+      });
+    }
+    return res.status(err.status || 400).json({ error: err.message, ...(err.extra || {}) });
   }
 }));
 

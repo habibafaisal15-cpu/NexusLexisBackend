@@ -1,8 +1,8 @@
 # NexusLexis — LEX AI Frontend Integration
 
 **Document ID:** NL-FE-LEX-001  
-**Version:** 1.5  
-**Updated:** 11 August 2026  
+**Version:** 1.6  
+**Updated:** 13 August 2026  
 **Audience:** Frontend team  
 **Classification:** Internal  
 
@@ -13,6 +13,8 @@
 LEX is the NexusLexis legal chat assistant. It answers **Pakistani law** questions in English, Urdu, or Roman Urdu. It is **not a lawyer** — UI must show a disclaimer.
 
 Production chat is **REST only**. Do **not** use WebSockets in production.
+
+**Guest limit:** Without login, users may send **4 prompts** on `POST /chat/`. The 5th attempt returns **401** with `loginRequired: true`. Logged-in clients are unlimited.
 
 ```env
 VITE_LEX_API_BASE_URL=https://nexus-lexis-backend-ql8w.vercel.app/api/v1/lex
@@ -96,7 +98,11 @@ Content-Type: application/json
   "response": "To register a private limited company in Pakistan…",
   "language": "EN",
   "register": "PLAIN",
-  "show_lawyer": false
+  "show_lawyer": false,
+  "guestPromptLimit": 4,
+  "guestPromptsUsed": 1,
+  "guestPromptsRemaining": 3,
+  "loginRequired": false
 }
 ```
 
@@ -106,6 +112,24 @@ Content-Type: application/json
 | `language` | `"EN"` \| `"UR"` | `"UR"` → `dir="rtl"` on that bubble |
 | `register` | `"PLAIN"` \| `"LEGAL"` | Optional badge (“Legal terms”) |
 | `show_lawyer` | boolean | If true, show **Find a Lawyer** → `/find-a-lawyer` |
+| `guestPromptLimit` | number | `4` for guests; omitted when logged in |
+| `guestPromptsRemaining` | number | Show “N free questions left”; at `0` next send needs login |
+| `loginRequired` | boolean | `true` only on **401** (see below) |
+
+**401 — guest limit reached**
+
+```json
+{
+  "error": "Login required to continue using LEX",
+  "code": "LEX_LOGIN_REQUIRED",
+  "loginRequired": true,
+  "guestPromptLimit": 4,
+  "guestPromptsUsed": 4,
+  "guestPromptsRemaining": 0
+}
+```
+
+Show login/signup modal. After login, send `Authorization: Bearer` — unlimited prompts.
 
 ---
 
@@ -360,7 +384,9 @@ Expect a greeting in `response`. Then try a legal question and an off-topic ques
 ## 11. Acceptance checklist
 
 - [ ] `.env` has `VITE_LEX_API_BASE_URL` (no trailing issues — path already includes `/api/v1/lex`)
-- [ ] Widget uses `POST …/chat/` with `{ message, session_key }`
+- [ ] Widget uses `POST …/chat/` with `{ message, session_key, owner_key }`
+- [ ] Guest: show `guestPromptsRemaining`; on `401 LEX_LOGIN_REQUIRED` open login
+- [ ] After login, send Bearer — unlimited prompts
 - [ ] Typing indicator for 0.3–6 s; timeout ~45 s
 - [ ] Urdu bubbles RTL
 - [ ] `show_lawyer` opens Find a Lawyer

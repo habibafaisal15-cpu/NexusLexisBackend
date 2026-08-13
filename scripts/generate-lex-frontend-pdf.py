@@ -333,7 +333,7 @@ def on_page(canvas, doc):
     canvas.rect(0, 12 * mm, PAGE_W, 1.1, fill=1, stroke=0)
     canvas.setFillColor(MUTED)
     canvas.setFont(BODY, 8)
-    canvas.drawString(MARGIN_L, 5 * mm, "Internal  ·  nexuslexis.law  ·  11 August 2026")
+    canvas.drawString(MARGIN_L, 5 * mm, "Internal  ·  nexuslexis.law  ·  13 August 2026")
     canvas.drawRightString(PAGE_W - MARGIN_R, 5 * mm, f"Page {doc.page - 1}")
     canvas.restoreState()
 
@@ -389,7 +389,7 @@ def build():
     story.append(Spacer(1, 14 * mm))
     meta = (
         "<b>Document ID</b>&nbsp;&nbsp;NL-FE-LEX-001<br/>"
-        "<b>Version</b>&nbsp;&nbsp;1.5 &nbsp;&nbsp;·&nbsp;&nbsp; <b>Date</b>&nbsp;&nbsp;11 August 2026<br/>"
+        "<b>Version</b>&nbsp;&nbsp;1.6 &nbsp;&nbsp;·&nbsp;&nbsp; <b>Date</b>&nbsp;&nbsp;13 August 2026<br/>"
         "<b>Owner</b>&nbsp;&nbsp;NexusLexis Backend<br/>"
         "<b>Applies to</b>&nbsp;&nbsp;Client chat widget only"
     )
@@ -417,8 +417,8 @@ def build():
     story.append(Spacer(1, 4 * mm))
     story.append(CalloutBox(
         "Production chat is <b>REST JSON</b>. Do not open WebSockets. "
-        "Send one <font face='Courier'>session_key</font> per thread. History is stored on the Main API "
-        "(<font face='Courier'>POST/GET/DELETE /sessions/</font>). Client widget only.",
+        "Guests get <b>4 free prompts</b>; the 5th returns <font face='Courier'>401 LEX_LOGIN_REQUIRED</font>. "
+        "Logged-in clients are unlimited. History: <font face='Courier'>POST/GET/DELETE /sessions/</font>.",
         bg=OK_BG, accent=TEAL, icon="START HERE",
     ))
 
@@ -482,10 +482,12 @@ def build():
         "Optimistic user bubble → typing indicator → POST /chat/.",
         "Render <font face='Courier'>response</font>. If <font face='Courier'>language === \"UR\"</font>, set <font face='Courier'>dir=\"rtl\"</font>.",
         "If <font face='Courier'>show_lawyer === true</font>, show CTA → <font face='Courier'>/find-a-lawyer</font>.",
-        "Keep <font face='Courier'>messages[]</font> in React state; persist to <font face='Courier'>localStorage</font> so refresh does not wipe the thread.",
+        "Track <font face='Courier'>guestPromptsRemaining</font>; at 0 show login before next send.",
+        "Persist <font face='Courier'>owner_key</font> (guest uuid) so the 4-prompt counter stays accurate.",
     ]))
     story.append(body(
-        "<b>Auth:</b> public chat does <b>not</b> require a JWT. Sending a logged-in token is fine (ignored today)."
+        "<b>Auth:</b> guests may chat without JWT (max 4 prompts). After login, send "
+        "<font face='Courier'>Authorization: Bearer</font> — unlimited."
     ))
 
     # —— 4 ——
@@ -494,10 +496,13 @@ def build():
     story.append(CodeBlock(
         "POST https://nexus-lexis-backend-ql8w.vercel.app/api/v1/lex/chat/\n"
         "Content-Type: application/json\n"
+        "X-Lex-Owner: guest_8f3a…          // guests — keep stable\n"
+        "// Authorization: Bearer <token>  // logged-in — unlimited\n"
         "\n"
         "{\n"
         '  "message": "How do I register a company in Pakistan?",\n'
-        '  "session_key": "session_1723280000000_ab12"\n'
+        '  "session_key": "session_1723280000000_ab12",\n'
+        '  "owner_key": "guest_8f3a…"\n'
         "}"
     ))
     story.append(make_table(
@@ -505,6 +510,7 @@ def build():
         [
             ["message", "Yes", "Non-empty. Empty → 400 { \"error\": \"Message is required\" }"],
             ["session_key", "Recommended", "Stable id for this conversation thread"],
+            ["owner_key", "Guest", "Or header X-Lex-Owner. Logged-in users: JWT sets user:&lt;id&gt;"],
         ],
         [32 * mm, 28 * mm, usable - 60 * mm],
     ))
@@ -514,7 +520,11 @@ def build():
         '  "response": "To register a private limited company in Pakistan…",\n'
         '  "language": "EN",\n'
         '  "register": "PLAIN",\n'
-        '  "show_lawyer": false\n'
+        '  "show_lawyer": false,\n'
+        '  "guestPromptLimit": 4,\n'
+        '  "guestPromptsUsed": 1,\n'
+        '  "guestPromptsRemaining": 3,\n'
+        '  "loginRequired": false\n'
         "}"
     ))
     story.append(make_table(
@@ -524,8 +534,26 @@ def build():
             ["language", "EN | UR", "UR → RTL + Urdu-capable font on that bubble"],
             ["register", "PLAIN | LEGAL", "Optional “Legal terms” badge"],
             ["show_lawyer", "boolean", "true → Find a Lawyer CTA"],
+            ["guestPromptsRemaining", "number", "Guests only. Show “N free left”. Logged-in: omitted"],
+            ["loginRequired", "boolean", "true only on 401 (limit hit)"],
         ],
-        [32 * mm, 28 * mm, usable - 60 * mm],
+        [42 * mm, 28 * mm, usable - 70 * mm],
+    ))
+    story.append(Paragraph("4.3 Guest limit (401)", S["H2"]))
+    story.append(CalloutBox(
+        "Without login, max <b>4</b> prompts per <font face='Courier'>owner_key</font>. "
+        "5th POST returns <font face='Courier'>401</font> — open login/signup. After JWT, unlimited.",
+        bg=WARN_BG, accent=HexColor("#C0392B"), icon="GUEST LIMIT",
+    ))
+    story.append(CodeBlock(
+        "{\n"
+        '  "error": "Login required to continue using LEX",\n'
+        '  "code": "LEX_LOGIN_REQUIRED",\n'
+        '  "loginRequired": true,\n'
+        '  "guestPromptLimit": 4,\n'
+        '  "guestPromptsUsed": 4,\n'
+        '  "guestPromptsRemaining": 0\n'
+        "}"
     ))
 
     # —— 5 ——
@@ -729,27 +757,28 @@ def build():
 
     # —— 11 ——
     story.append(heading("10. Smoke test & acceptance checklist"))
-    story.append(Paragraph("No login required for public chat:", S["H2"]))
+    story.append(Paragraph("Guest: 4 free prompts, then login:", S["H2"]))
     story.append(CodeBlock(
         "curl -s https://nexus-lexis-backend-ql8w.vercel.app/api/v1/lex/chat/ \\\n"
         "  -H \"Content-Type: application/json\" \\\n"
-        "  -d \"{\\\"message\\\":\\\"Hello\\\",\\\"session_key\\\":\\\"fe_smoke_1\\\"}\""
+        "  -H \"X-Lex-Owner: guest_smoke_1\" \\\n"
+        "  -d \"{\\\"message\\\":\\\"Hello\\\",\\\"session_key\\\":\\\"fe_smoke_1\\\",\\\"owner_key\\\":\\\"guest_smoke_1\\\"}\""
     ))
     story.append(body(
-        "Expect a greeting. Then try a legal question and an off-topic line "
-        "(<font face='Courier'>what is the weather?</font>). "
-        "No login required for the public client widget."
+        "Expect a greeting + <font face='Courier'>guestPromptsRemaining</font>. "
+        "After 4 sends, 5th → <font face='Courier'>401 LEX_LOGIN_REQUIRED</font>. "
+        "With Bearer token, unlimited."
     ))
     story.append(make_table(
         ["#", "Check"],
         [
             ["1", "VITE_LEX_API_BASE_URL set (path already includes /api/v1/lex)"],
-            ["2", "Widget POSTs …/chat/ with { message, session_key }"],
-            ["3", "Typing indicator 0.3–6s; abort ~45s"],
-            ["4", "Urdu bubbles RTL"],
-            ["5", "show_lawyer opens Find a Lawyer"],
-            ["6", "Disclaimer visible under the widget"],
-            ["7", "Same session_key for the whole thread (history + follow-up memory)"],
+            ["2", "Widget POSTs …/chat/ with { message, session_key, owner_key }"],
+            ["3", "Guest: show remaining; 401 → login modal"],
+            ["4", "After login, send Bearer — unlimited prompts"],
+            ["5", "Typing indicator 0.3–6s; abort ~45s"],
+            ["6", "Urdu bubbles RTL; show_lawyer → Find a Lawyer"],
+            ["7", "Disclaimer visible under the widget"],
             ["8", "Sidebar = GET /sessions/ with owner_key or client JWT"],
             ["9", "New chat = POST /sessions/"],
             ["10", "No WebSocket in the production build"],
@@ -762,7 +791,7 @@ def build():
     story.append(make_table(
         ["Method", "Path", "Auth", "Notes"],
         [
-            ["POST", "/api/v1/lex/chat/", "Public / client JWT", "Client widget"],
+            ["POST", "/api/v1/lex/chat/", "Public (4) / JWT", "Guest limit 4; JWT unlimited"],
             ["POST", "/api/v1/lex/sessions/", "Public / client JWT", "New chat"],
             ["GET", "/api/v1/lex/sessions/", "Public / client JWT", "History sidebar"],
             ["GET", "/api/v1/lex/sessions/:key/", "Public / client JWT", "Open thread"],
@@ -799,7 +828,7 @@ def build():
         bottomMargin=MARGIN_B + 4 * mm,
         title="NexusLexis — LEX AI Frontend Integration",
         author="NexusLexis Backend",
-        subject="NL-FE-LEX-001 v1.5",
+        subject="NL-FE-LEX-001 v1.6",
     )
     doc.build(story, onFirstPage=first_page, onLaterPages=later_pages)
     print(f"Wrote {OUT}")

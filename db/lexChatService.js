@@ -3,10 +3,91 @@ import { query } from './index.js';
 import { ensureLexSchema } from './ensureLexSchema.js';
 
 export class LexChatError extends Error {
-  constructor(message, status = 400) {
+  constructor(message, status = 400, extra = {}) {
     super(message);
     this.status = status;
+    this.extra = extra;
   }
+}
+
+export const GUEST_LEX_PROMPT_LIMIT = Number(process.env.LEX_GUEST_PROMPT_LIMIT) || 4;
+
+export class LexGuestLimitError extends LexChatError {
+  constructor(used, limit = GUEST_LEX_PROMPT_LIMIT) {
+    super('Login required to continue using LEX', 401, {
+      code: 'LEX_LOGIN_REQUIRED',
+      loginRequired: true,
+      guestPromptLimit: limit,
+      guestPromptsUsed: used,
+      guestPromptsRemaining: 0,
+    });
+    this.code = 'LEX_LOGIN_REQUIRED';
+    this.loginRequired = true;
+    this.guestPromptLimit = limit;
+    this.guestPromptsUsed = used;
+    this.guestPromptsRemaining = 0;
+  }
+}
+
+export function isAuthenticatedLexUser(userId) {
+  return Boolean(userId);
+}
+
+export function resolveGuestOwnerKey(req, explicitOwnerKey = null) {
+  const raw = String(
+    explicitOwnerKey
+    || req?.headers?.['x-lex-owner']
+    || req?.body?.owner_key
+    || ''
+  ).trim();
+  if (raw) return raw.slice(0, 200);
+  const ip = String(
+    req?.headers?.['x-forwarded-for']
+    || req?.headers?.['x-real-ip']
+    || req?.socket?.remoteAddress
+    || 'unknown'
+  ).split(',')[0].trim();
+  return `guest_ip:${ip.slice(0, 120)}`;
+}
+
+export async function countGuestLexPrompts(ownerKey) {
+  if (!ownerKey || String(ownerKey).startsWith('user:')) return 0;
+  await ensureLexSchema();
+  const result = await query(
+    `SELECT COUNT(*)::int AS total
+     FROM lex_ai_chat_logs l
+     INNER JOIN lex_sessions s ON s.session_key = l.session_id
+     WHERE s.owner_key = $1`,
+    [ownerKey]
+  );
+  return result.rows[0]?.total || 0;
+}
+
+export async function assertGuestLexPromptAllowed({ userId, ownerKey }) {
+  if (isAuthenticatedLexUser(userId)) {
+    return { guestPromptLimit: null, guestPromptsUsed: null, guestPromptsRemaining: null };
+  }
+  const limit = GUEST_LEX_PROMPT_LIMIT;
+  const used = await countGuestLexPrompts(ownerKey);
+  if (used >= limit) {
+    throw new LexGuestLimitError(used, limit);
+  }
+  return {
+    guestPromptLimit: limit,
+    guestPromptsUsed: used,
+    guestPromptsRemaining: limit - used,
+  };
+}
+
+export function guestQuotaAfterSend(beforeQuota) {
+  if (!beforeQuota?.guestPromptLimit) return beforeQuota;
+  const used = (beforeQuota.guestPromptsUsed || 0) + 1;
+  return {
+    guestPromptLimit: beforeQuota.guestPromptLimit,
+    guestPromptsUsed: used,
+    guestPromptsRemaining: Math.max(0, beforeQuota.guestPromptLimit - used),
+    loginRequired: false,
+  };
 }
 
 function titleFromMessage(message) {
