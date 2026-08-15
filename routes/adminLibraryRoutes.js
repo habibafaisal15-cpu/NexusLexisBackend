@@ -57,6 +57,15 @@ function parseAccessType(value, fallback = 'paid') {
   return fallback;
 }
 
+function parseBoolean(value, fallback = undefined) {
+  if (value === undefined || value === null || value === '') return fallback;
+  if (typeof value === 'boolean') return value;
+  const raw = String(value).toLowerCase().trim();
+  if (['true', '1', 'yes', 'active'].includes(raw)) return true;
+  if (['false', '0', 'no', 'inactive'].includes(raw)) return false;
+  return fallback;
+}
+
 export function createAdminLibraryRouter() {
   const router = Router();
   const upload = createUpload();
@@ -138,8 +147,11 @@ export function createAdminLibraryRouter() {
         block: req.body.block,
         language: req.body.language || req.body.lang,
         author: req.body.author || req.body.lawyer,
+        lawyerProfileId: req.body.lawyerProfileId
+          || req.body.lawyerId
+          || req.body.authorProfileId,
         version: req.body.version,
-        isActive: req.body.isActive !== 'false' && req.body.isActive !== false,
+        isActive: parseBoolean(req.body.isActive ?? req.body.active, true),
         file: filePayload(req.file),
       });
       res.status(201).json({ template });
@@ -167,8 +179,11 @@ export function createAdminLibraryRouter() {
         block: req.body.block,
         language: req.body.language || req.body.lang,
         author: req.body.author || req.body.lawyer,
+        lawyerProfileId: req.body.lawyerProfileId
+          ?? req.body.lawyerId
+          ?? req.body.authorProfileId,
         version: req.body.version,
-        isActive: req.body.isActive,
+        isActive: parseBoolean(req.body.isActive ?? req.body.active),
         clearFile: req.body.clearFile === true || req.body.clearFile === 'true',
         file: filePayload(req.file),
       });
@@ -179,19 +194,40 @@ export function createAdminLibraryRouter() {
     })
   );
 
-  router.delete('/templates/:idOrSlug', asyncHandler(async (req, res) => {
-    const hard = req.query.hard === 'true' || req.query.permanent === 'true';
-    if (hard) {
-      const deleted = await repo.hardDeleteLibraryTemplate(req.params.idOrSlug);
-      if (!deleted) return res.status(404).json({ error: 'Template not found' });
-      return res.json({
-        ok: true,
-        temporaryTestingApi: true,
-        hardDeleted: true,
-        template: deleted,
+  router.patch(
+    '/templates/:idOrSlug',
+    upload.single('file'),
+    asyncHandler(async (req, res) => {
+      const template = await repo.updateLibraryTemplate(req.params.idOrSlug, {
+        name: req.body.name,
+        slug: req.body.slug,
+        categorySlug: req.body.categorySlug,
+        categoryId: req.body.categoryId,
+        price: req.body.price,
+        deliveryDays: req.body.deliveryDays,
+        description: req.body.description,
+        intakeSchema: parseJsonField(req.body.intakeSchema, undefined),
+        accessType: req.body.accessType !== undefined || req.body.type !== undefined
+          ? parseAccessType(req.body.accessType || req.body.type, 'paid')
+          : undefined,
+        code: req.body.code,
+        block: req.body.block,
+        language: req.body.language || req.body.lang,
+        author: req.body.author || req.body.lawyer,
+        lawyerProfileId: req.body.lawyerProfileId
+          ?? req.body.lawyerId
+          ?? req.body.authorProfileId,
+        version: req.body.version,
+        isActive: parseBoolean(req.body.isActive ?? req.body.active),
+        clearFile: parseBoolean(req.body.clearFile, false),
+        file: filePayload(req.file),
       });
-    }
+      if (!template) return res.status(404).json({ error: 'Template not found' });
+      res.json({ template });
+    })
+  );
 
+  router.delete('/templates/:idOrSlug', asyncHandler(async (req, res) => {
     const template = await repo.deactivateLibraryTemplate(req.params.idOrSlug);
     if (!template) {
       return res.status(404).json({ error: 'Template not found' });

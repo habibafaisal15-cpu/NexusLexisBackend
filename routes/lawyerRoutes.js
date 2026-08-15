@@ -220,7 +220,10 @@ export function createLawyerRouter(lexApiUrl, uploadsDir = 'uploads/') {
   router.post('/profile/photo', authMiddleware, upload.single('photo'), asyncHandler(async (req, res) => {
     const userId = requireLawyer(req, res);
     if (!userId) return;
-    res.json({ success: true, photoUrl: req.file?.filename || 'avatar.jpg' });
+    if (!req.file) {
+      return res.status(400).json({ error: 'Photo file required' });
+    }
+    res.json(await pro.updateLawyerProfilePhoto(userId, req.file));
   }));
 
   router.get('/team', authMiddleware, asyncHandler(async (req, res) => {

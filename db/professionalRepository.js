@@ -93,7 +93,7 @@ export async function ensureLawyerProfile(userId) {
   const user = await getUserById(userId);
   if (!user) return null;
 
-  const result = await query(
+  await query(
     `INSERT INTO lawyer_profiles (
       user_id, full_name, cnic, bar_council_name, bar_council_num, verification_stat,
       membership_tier, city, practice_area, language, short_bio, full_bio,
@@ -105,7 +105,7 @@ export async function ensureLawyerProfile(userId) {
     RETURNING *`,
     [userId, user.username]
   );
-  return result.rows[0];
+  return getLawyerProfileByUserId(userId);
 }
 
 export async function getCaProfileByUserId(userId) {
@@ -126,7 +126,7 @@ export async function ensureCaProfile(userId) {
   const user = await getUserById(userId);
   if (!user) return null;
 
-  const result = await query(
+  await query(
     `INSERT INTO ca_profiles (
       user_id, full_name, cnic, qualification, city, fees, verification_stat,
       membership_tier, icap_membership_no, short_bio, full_bio, online_fee, inperson_fee, monthly_leads
@@ -137,7 +137,7 @@ export async function ensureCaProfile(userId) {
     RETURNING *`,
     [userId, user.username]
   );
-  return result.rows[0];
+  return getCaProfileByUserId(userId);
 }
 
 export async function getLawyerDashboard(userId) {
@@ -274,12 +274,22 @@ export async function getLawyerOrders(userId) {
 
 export async function getLawyerProfile(userId) {
   const profile = await ensureLawyerProfile(userId);
+  const profileId = String(profile.id);
+  const photo = profile.photo || profile.documents?.profilePhoto || null;
   return {
     profile: {
+      id: profileId,
+      lawyerProfileId: profileId,
+      professionalProfileId: profileId,
+      userId: String(profile.user_id),
+      email: profile.email || null,
       fullName: profile.full_name,
       name: profile.full_name,
-      photoUrl: profile.photo,
-      avatarUrl: profile.photo,
+      image: photo,
+      photo: photo,
+      photoUrl: photo,
+      avatarUrl: photo,
+      profilePicture: photo,
       city: profile.city,
       shortBio: profile.short_bio,
       fullBio: profile.full_bio,
@@ -298,6 +308,21 @@ export async function getLawyerProfile(userId) {
       verificationStatus: profile.verification_stat === 'verified' ? 'Approved' : 'Pending',
       tier: tierLabel(profile.membership_tier)
     }
+  };
+}
+
+export async function updateLawyerProfilePhoto(userId, file) {
+  if (!file?.filename) throw new Error('Photo file required');
+  const profile = await ensureLawyerProfile(userId);
+  const photoPath = `/uploads/${file.filename}`;
+  await query('UPDATE lawyer_profiles SET photo = $1 WHERE id = $2', [photoPath, profile.id]);
+  return {
+    success: true,
+    id: String(profile.id),
+    lawyerProfileId: String(profile.id),
+    photoUrl: photoPath,
+    avatarUrl: photoPath,
+    profilePicture: photoPath,
   };
 }
 
@@ -955,13 +980,23 @@ export async function updateCaAppointment(userId, appointmentId, { status, meeti
 export async function getCaProfile(userId) {
   const profile = await ensureCaProfile(userId);
   const expertise = parseServiceAreas(profile.service_areas);
+  const profileId = String(profile.id);
+  const photo = profile.photo || profile.documents?.profilePhoto || null;
 
   return {
     profile: {
+      id: profileId,
+      caProfileId: profileId,
+      professionalProfileId: profileId,
+      userId: String(profile.user_id),
+      email: profile.email || null,
       fullName: profile.full_name,
       name: profile.full_name,
-      photoUrl: profile.photo,
-      avatarUrl: profile.photo,
+      image: photo,
+      photo: photo,
+      photoUrl: photo,
+      avatarUrl: photo,
+      profilePicture: photo,
       cnic: profile.cnic,
       icapMembershipNo: profile.icap_membership_no,
       membershipNumber: profile.icap_membership_no,

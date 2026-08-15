@@ -217,6 +217,9 @@ function mapLibraryTemplateRow(row, { includeFile = false, owned = false, ownedO
   const name = row.name;
   const slug = row.slug;
   const price = Number(row.price) || 0;
+  const lawyerProfileId = row.lawyer_profile_id != null
+    ? String(row.lawyer_profile_id)
+    : null;
 
   const template = {
     id: row.service_id || row.id,
@@ -235,6 +238,9 @@ function mapLibraryTemplateRow(row, { includeFile = false, owned = false, ownedO
     description: row.description || row.intake_schema?.category || row.category_description || '',
     lawyer: row.author || null,
     author: row.author || null,
+    lawyerProfileId,
+    lawyerId: lawyerProfileId,
+    authorProfileId: lawyerProfileId,
     version: row.version || '1.0',
     deliveryDays: row.delivery_days,
     intakeSchema: row.intake_schema || {},
@@ -390,7 +396,7 @@ export async function getLibraryCatalog({
             sc.display_order,
             s.id AS service_id, s.name, s.slug, s.price, s.delivery_days, s.intake_schema,
             s.description, s.is_active, s.access_type, s.template_file_name, s.template_mime_type,
-            s.code, s.block, s.language, s.author, s.version,
+            s.code, s.block, s.language, s.author, s.lawyer_profile_id, s.version,
             CASE WHEN s.template_content_base64 IS NOT NULL THEN TRUE ELSE FALSE END AS has_file
      ${fromJoin}
      ORDER BY sc.display_order ASC, sc.name ASC, s.name ASC
@@ -492,7 +498,7 @@ export async function getLibraryTemplate(slug, {
   const result = await query(
     `SELECT s.id, s.name, s.slug, s.price, s.delivery_days, s.intake_schema,
             s.description, s.is_active, s.access_type, s.template_file_name, s.template_mime_type,
-            s.code, s.block, s.language, s.author, s.version,
+            s.code, s.block, s.language, s.author, s.lawyer_profile_id, s.version,
             ${includeFile ? 's.template_content_base64,' : ''}
             sc.id AS category_id, sc.name AS category_name, sc.slug AS category_slug,
             sc.description AS category_description, sc.icon AS category_icon
@@ -547,6 +553,36 @@ async function allocateUniqueServiceSlug(baseSlug, excludeId = null) {
     candidate = `${baseSlug}-${i + 2}`;
   }
   return `${baseSlug}-${Date.now()}`;
+}
+
+async function resolveVerifiedTemplateAuthor(lawyerProfileId, author) {
+  const hasAuthor = String(author || '').trim()
+    && String(author).trim().toLowerCase() !== 'nexuslexis';
+  if (lawyerProfileId === undefined || lawyerProfileId === null || lawyerProfileId === '') {
+    if (hasAuthor) {
+      throw new Error('lawyerProfileId is required when a lawyer/author is set');
+    }
+    return { lawyerProfileId: null, author: author || 'NexusLexis' };
+  }
+
+  const parsedId = Number(lawyerProfileId);
+  if (!Number.isInteger(parsedId) || parsedId <= 0) {
+    throw new Error('lawyerProfileId must be a valid verified lawyer profile id');
+  }
+  const result = await query(
+    `SELECT lp.id, lp.full_name
+     FROM lawyer_profiles lp
+     INNER JOIN users u ON u.id = lp.user_id AND u.is_active = TRUE
+     WHERE lp.id = $1
+       AND lp.verification_stat = 'verified'
+       AND COALESCE(lp.is_suspended, FALSE) = FALSE`,
+    [parsedId]
+  );
+  const profile = result.rows[0];
+  if (!profile) {
+    throw new Error('lawyerProfileId does not match a verified public lawyer');
+  }
+  return { lawyerProfileId: profile.id, author: profile.full_name };
 }
 
 export async function createLibraryCategory({ name, slug, description, icon, displayOrder }) {
@@ -684,6 +720,7 @@ export async function createLibraryTemplate({
   block,
   language,
   author,
+  lawyerProfileId,
   version,
   file,
 }) {
@@ -718,15 +755,16 @@ export async function createLibraryTemplate({
   if (resolvedAccessType === 'paid' && finalPrice <= 0) {
     throw new Error('Paid library templates require a price greater than 0');
   }
+  const resolvedAuthor = await resolveVerifiedTemplateAuthor(lawyerProfileId, author);
 
   const result = await query(
     `INSERT INTO services (
        category_id, name, slug, price, delivery_days, intake_schema,
-       description, is_active, access_type, code, block, language, author, version,
+       description, is_active, access_type, code, block, language, author, lawyer_profile_id, version,
        template_file_name, template_mime_type, template_content_base64
-     ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+     ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
      RETURNING id, name, slug, price, delivery_days, intake_schema, description, is_active, access_type,
-               code, block, language, author, version, template_file_name, template_mime_type,
+               code, block, language, author, lawyer_profile_id, version, template_file_name, template_mime_type,
                CASE WHEN template_content_base64 IS NOT NULL THEN TRUE ELSE FALSE END AS has_file`,
     [
       resolvedCategoryId,
@@ -743,7 +781,8 @@ export async function createLibraryTemplate({
       code || null,
       block || null,
       language || 'English',
-      author || 'NexusLexis',
+      resolvedAuthor.author,
+      resolvedAuthor.lawyerProfileId,
       version || '1.0',
       file?.fileName || null,
       file?.mimeType || null,
@@ -773,6 +812,7 @@ export async function updateLibraryTemplate(idOrSlug, {
   block,
   language,
   author,
+  lawyerProfileId,
   version,
   file,
   clearFile = false,
@@ -813,7 +853,11 @@ export async function updateLibraryTemplate(idOrSlug, {
   if (code !== undefined) push('code', code || null);
   if (block !== undefined) push('block', block || null);
   if (language !== undefined) push('language', language || 'English');
-  if (author !== undefined) push('author', author || null);
+  if (author !== undefined || lawyerProfileId !== undefined) {
+    const resolvedAuthor = await resolveVerifiedTemplateAuthor(lawyerProfileId, author);
+    push('author', resolvedAuthor.author);
+    push('lawyer_profile_id', resolvedAuthor.lawyerProfileId);
+  }
   if (version !== undefined) push('version', version || '1.0');
   if (intakeSchema !== undefined) {
     params.push(JSON.stringify(intakeSchema || {}));
@@ -1973,6 +2017,7 @@ export async function getLawyers(filters = {}) {
            lp.language, lp.languages, lp.practice_areas AS "practiceAreas",
            COALESCE(NULLIF(lp.full_bio, ''), lp.short_bio, '') AS bio,
            lp.online_fee, lp.inperson_fee, lp.verification_stat,
+           u.email,
            COALESCE(NULLIF(lp.photo, ''), lp.documents->>'profilePhoto', '') AS image,
            COALESCE(AVG(lr.rating), 5)::numeric(3,1) AS stars
     FROM lawyer_profiles lp
@@ -2006,12 +2051,15 @@ export async function getLawyers(filters = {}) {
     )`;
   }
 
-  sql += ' GROUP BY lp.id ORDER BY lp.membership_tier DESC NULLS LAST, lp.id';
+  sql += ' GROUP BY lp.id, u.email ORDER BY lp.membership_tier DESC NULLS LAST, lp.id';
 
   const result = await query(sql, params);
   return result.rows.map((row) => ({
     id: String(row.id),
+    lawyerProfileId: String(row.id),
+    userId: String(row.user_id),
     name: row.name,
+    email: row.email || null,
     city: row.city || 'Pakistan',
     practiceArea: row.practiceArea || 'General practice',
     practiceAreas: row.practiceAreas || '',
@@ -2022,6 +2070,8 @@ export async function getLawyers(filters = {}) {
     onlineFee: formatPrice(row.online_fee),
     inPersonFee: formatPrice(row.inperson_fee),
     image: row.image || 'https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&q=80&w=256',
+    photoUrl: row.image || 'https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&q=80&w=256',
+    profilePicture: row.image || 'https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&q=80&w=256',
     verificationStatus: row.verification_stat === 'verified' ? 'Verified' : 'Pending',
     availableSlots: ['10:00 AM', '11:30 AM', '2:00 PM', '4:00 PM'],
   }));
@@ -2033,6 +2083,7 @@ export async function getCas(filters = {}) {
            cp.service_areas AS "serviceAreas",
            COALESCE(NULLIF(cp.full_bio, ''), cp.short_bio, '') AS bio,
            cp.online_fee, cp.inperson_fee, cp.fees, cp.verification_stat,
+           u.email,
            COALESCE(NULLIF(cp.photo, ''), cp.documents->>'profilePhoto', '') AS image
     FROM ca_profiles cp
     INNER JOIN users u ON u.id = cp.user_id AND u.is_active = TRUE
@@ -2059,8 +2110,11 @@ export async function getCas(filters = {}) {
   const result = await query(sql, params);
   return result.rows.map((row) => ({
     id: String(row.id),
+    caProfileId: String(row.id),
+    professionalProfileId: String(row.id),
     userId: String(row.user_id),
     name: row.name,
+    email: row.email || null,
     city: row.city || 'Pakistan',
     qualification: row.qualification || 'Chartered Accountant',
     serviceAreas: row.serviceAreas || '',
@@ -2068,6 +2122,8 @@ export async function getCas(filters = {}) {
     onlineFee: formatPrice(row.online_fee || row.fees),
     inPersonFee: formatPrice(row.inperson_fee),
     image: row.image || 'https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&q=80&w=256',
+    photoUrl: row.image || 'https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&q=80&w=256',
+    profilePicture: row.image || 'https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&q=80&w=256',
     verificationStatus: row.verification_stat === 'verified' ? 'Verified' : 'Pending',
     role: 'CA',
   }));

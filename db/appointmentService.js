@@ -413,6 +413,18 @@ async function ensureCustomDraftingService() {
 export async function bookLawyerAppointment(clientId, body = {}, files = []) {
   const lawyerProfileId = body.lawyerProfileId || body.professionalProfileId;
   const lawyerName = body.lawyerName;
+  const sourceRaw = String(body.source || '').toLowerCase();
+  const categoryId = body.categoryId || body.category_id || null;
+  const isCustom = sourceRaw === 'custom_docs'
+    || String(categoryId || '').toLowerCase() === 'drafting'
+    || normalizeAppointmentMode(body.mode) === 'document';
+
+  if (isCustom && !lawyerProfileId) {
+    throw new AppointmentError(
+      'lawyerProfileId is required for custom document requests; lawyerName is not an identity',
+      400
+    );
+  }
 
   let lawyerRow = null;
   if (lawyerProfileId) {
@@ -420,12 +432,17 @@ export async function bookLawyerAppointment(clientId, body = {}, files = []) {
       `SELECT lp.id, lp.user_id, lp.full_name
        FROM lawyer_profiles lp
        INNER JOIN users u ON u.id = lp.user_id AND u.is_active = TRUE
-       WHERE lp.id = $1 AND COALESCE(lp.is_suspended, FALSE) = FALSE`,
+       WHERE lp.id = $1
+         AND lp.verification_stat = 'verified'
+         AND COALESCE(lp.is_suspended, FALSE) = FALSE`,
       [Number(lawyerProfileId)]
     );
     lawyerRow = byId.rows[0] || null;
+    if (!lawyerRow) {
+      throw new AppointmentError('lawyerProfileId does not match a verified public lawyer', 400);
+    }
   }
-  if (!lawyerRow && lawyerName) {
+  if (!lawyerProfileId && lawyerName && !isCustom) {
     const byName = await query(
       `SELECT lp.id, lp.user_id, lp.full_name
        FROM lawyer_profiles lp
@@ -451,11 +468,6 @@ export async function bookLawyerAppointment(clientId, body = {}, files = []) {
     throw new AppointmentError('This slot is no longer available', 409);
   }
 
-  const sourceRaw = String(body.source || '').toLowerCase();
-  const categoryId = body.categoryId || body.category_id || null;
-  const isCustom = sourceRaw === 'custom_docs'
-    || String(categoryId || '').toLowerCase() === 'drafting'
-    || normalizeAppointmentMode(body.mode) === 'document';
   const source = isCustom ? 'custom_docs' : (sourceRaw || 'consultation');
   const mode = normalizeAppointmentMode(body.mode);
   const subject = body.subject || (isCustom ? 'Document Drafting Consultation' : null);

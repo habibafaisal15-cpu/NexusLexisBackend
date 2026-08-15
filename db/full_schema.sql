@@ -228,6 +228,7 @@ CREATE TABLE IF NOT EXISTS services (
     block VARCHAR(100),
     language VARCHAR(50) DEFAULT 'English',
     author VARCHAR(255),
+    lawyer_profile_id BIGINT REFERENCES lawyer_profiles(id),
     version VARCHAR(50) DEFAULT '1.0'
 );
 
@@ -241,7 +242,9 @@ ALTER TABLE services ADD COLUMN IF NOT EXISTS code VARCHAR(50);
 ALTER TABLE services ADD COLUMN IF NOT EXISTS block VARCHAR(100);
 ALTER TABLE services ADD COLUMN IF NOT EXISTS language VARCHAR(50);
 ALTER TABLE services ADD COLUMN IF NOT EXISTS author VARCHAR(255);
+ALTER TABLE services ADD COLUMN IF NOT EXISTS lawyer_profile_id BIGINT REFERENCES lawyer_profiles(id);
 ALTER TABLE services ADD COLUMN IF NOT EXISTS version VARCHAR(50);
+CREATE INDEX IF NOT EXISTS idx_services_lawyer_profile ON services (lawyer_profile_id);
 
 UPDATE services SET access_type = 'paid' WHERE access_type IS NULL OR access_type = '';
 UPDATE services SET is_active = TRUE WHERE is_active IS NULL;
