@@ -18,6 +18,8 @@ import { seedDatabase } from './db/seed.js';
 import { ensureLibrarySchema } from './db/ensureLibrarySchema.js';
 import { ensureAppointmentsSchema } from './db/ensureAppointmentsSchema.js';
 import { ensureLexSchema } from './db/ensureLexSchema.js';
+import { ensureAdminPortalSchema } from './db/ensureAdminPortalSchema.js';
+import { createAdminPortalRouter } from './routes/adminPortalRoutes.js';
 import * as repo from './db/repository.js';
 import * as authRepo from './db/auth.js';
 import { asyncHandler } from './shared/lib/asyncHandler.js';
@@ -78,6 +80,9 @@ app.get('/', (_req, res) => {
       adminPatchAppointment: 'PATCH /api/v2/admin/appointments/:id',
       adminReassignAppointment: 'POST /api/v2/admin/appointments/:id/reassign',
       adminAssignableProfessionals: 'GET /api/v2/admin/assignable-professionals',
+      draftingDesk: 'GET /api/v2/admin/drafting-desk/orders',
+      knowledgeArticles: 'GET /api/v2/knowledge/articles',
+      lexConsole: 'GET /api/v2/admin/lex/stats',
     },
   });
 });
@@ -101,6 +106,7 @@ app.use(asyncHandler(async (_req, _res, next) => {
     await ensureLibrarySchema();
     await ensureAppointmentsSchema();
     await ensureLexSchema();
+    await ensureAdminPortalSchema();
   }
   next();
 }));
@@ -395,6 +401,22 @@ app.get('/api/v2/knowledge-bank/templates/:slug/download', asyncHandler(async (r
 }));
 
 app.use('/api/v2/admin/library', createAdminLibraryRouter());
+app.use('/api/v2/admin', createAdminPortalRouter());
+
+// Public Knowledge content (SEO articles) — distinct from free template downloads
+app.get('/api/v2/knowledge/articles', asyncHandler(async (req, res) => {
+  const { listKnowledgeArticles } = await import('./db/knowledgeContentService.js');
+  res.json(await listKnowledgeArticles(req.query || {}, { publicOnly: true }));
+}));
+
+app.get('/api/v2/knowledge/articles/:slug', asyncHandler(async (req, res) => {
+  const { getKnowledgeArticleBySlug } = await import('./db/knowledgeContentService.js');
+  try {
+    res.json(await getKnowledgeArticleBySlug(req.params.slug, { publicOnly: true }));
+  } catch (err) {
+    return res.status(err.status || 400).json({ error: err.message });
+  }
+}));
 
 // NL-BE-ADMIN-OVERSIGHT-001 — Appointment Oversight (same appointments rows)
 app.get('/api/v2/admin/appointments/stats', authMiddleware, adminMiddleware, asyncHandler(async (req, res) => {

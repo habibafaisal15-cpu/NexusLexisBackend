@@ -179,6 +179,29 @@ export async function searchQuestionBank(userMessage, apiKey) {
   return { found: false, matches: [], score: tfidfHit.score || 0, method: 'none' };
 }
 
+/** Clear in-memory sheet/TF-IDF/embeddings so next chat reloads from Google Sheet. */
+export function invalidateQuestionBankCache() {
+  cache = {
+    entries: [],
+    tfidf: null,
+    embeddingEntries: [],
+    etag: null,
+    loadedAt: 0,
+    sheetBuilding: null,
+    embeddingBuilding: null,
+  };
+}
+
+export function getQuestionBankMeta() {
+  return {
+    entryCount: cache.entries.length,
+    embeddingCount: cache.embeddingEntries.length,
+    loadedAt: cache.loadedAt || null,
+    cacheTtlMs: CACHE_TTL_MS,
+    hasTfidf: Boolean(cache.tfidf),
+  };
+}
+
 /** Pre-load sheet + TF-IDF on startup so the first chat is fast. */
 export function warmQuestionBank(apiKey) {
   if (!apiKey) return Promise.resolve();

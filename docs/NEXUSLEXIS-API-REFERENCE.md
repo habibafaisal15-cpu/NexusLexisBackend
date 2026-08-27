@@ -225,8 +225,6 @@ Forwards `Authorization` header. Enables single ngrok tunnel for frontend dev.
 | GET | `/team` | — | Team members |
 | POST | `/team` | `{ name, email, role }` | Add team member |
 | DELETE | `/team/:memberId` | — | Remove team member |
-| GET | `/lex/usage` | — | LEX AI usage stats |
-| POST | `/lex/query` | `{ message, session_key }` | LEX chat (server-side proxy → :8001) |
 | POST | `/lexisnexis/connect` | credentials | LexisNexis integration placeholder |
 
 ---
@@ -382,8 +380,8 @@ Proxies to `http://localhost:8001`
 | GET | `/api/v1/lex/sessions/` | Public | — | `[{ session_key, title, ... }]` | List all sessions |
 | GET | `/api/v1/lex/sessions/:sessionKey/` | Public | — | `{ session_key, messages[] }` | Session history |
 
-**Used by:** Main API proxy, WebSocket handler, lawyer `/lex/query` internal proxy  
-**AI provider:** Anthropic Claude (`ANTHROPIC_API_KEY` in `lex_backend/.env`)
+**Used by:** Client / public LEX widget on Main API (`/api/v1/lex/*`)
+**AI provider:** Gemini inline on Main API (production). Django LEX path is legacy/local only.
 
 ---
 
@@ -412,11 +410,11 @@ These are **not exposed by Nexus Lexis** but are called internally:
 Main API :3000                          →  Target
 ──────────────────────────────────────────────────────────────
 /api/auth/*                             →  Auth API :3001/api/auth/*
-/api/v1/lex/chat/                       →  LEX AI :8001/api/v1/lex/chat/
-/api/v1/lex/sessions/                   →  LEX AI :8001/api/v1/lex/sessions/
-/api/v1/lex/sessions/:key/              →  LEX AI :8001/api/v1/lex/sessions/:key/
-ws://.../api/lex/ws                     →  LEX AI :8001/api/v1/lex/chat/ (HTTP POST)
-/api/v2/lawyer/lex/query                →  LEX AI :8001/api/v1/lex/chat/ (server-side)
+/api/v1/lex/chat/                       →  inline LEX (Node + Gemini) on Main API
+/api/v1/lex/sessions/                   →  Main API (Postgres history)
+/api/v1/lex/sessions/:key/              →  Main API (Postgres history)
+ws://.../api/lex/ws                     →  local only — do not use in production
+# Do NOT integrate: /api/v2/lawyer/lex/*  (counsel LEX out of scope)
 ```
 
 ---

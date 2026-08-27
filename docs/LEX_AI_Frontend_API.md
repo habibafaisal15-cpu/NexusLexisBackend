@@ -16,6 +16,8 @@ Production chat is **REST only**. Do **not** use WebSockets in production.
 
 **Guest limit:** Without login, users may send **4 prompts** on `POST /chat/`. The 5th attempt returns **401** with `loginRequired: true`. Logged-in clients are unlimited.
 
+**Out of scope — do not integrate:** Lawyer / counsel LEX (`/api/v2/lawyer/lex/*`). No LEX widget on lawyer dashboard. Client / public widget only.
+
 ```env
 VITE_LEX_API_BASE_URL=https://nexus-lexis-backend-ql8w.vercel.app/api/v1/lex
 VITE_API_BASE_URL=https://nexus-lexis-backend-ql8w.vercel.app/api/v2

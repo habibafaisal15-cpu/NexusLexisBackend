@@ -418,7 +418,9 @@ def build():
     story.append(CalloutBox(
         "Production chat is <b>REST JSON</b>. Do not open WebSockets. "
         "Guests get <b>4 free prompts</b>; the 5th returns <font face='Courier'>401 LEX_LOGIN_REQUIRED</font>. "
-        "Logged-in clients are unlimited. History: <font face='Courier'>POST/GET/DELETE /sessions/</font>.",
+        "Logged-in clients are unlimited. History: <font face='Courier'>POST/GET/DELETE /sessions/</font>. "
+        "<b>OUT OF SCOPE:</b> Lawyer/counsel LEX — do <b>not</b> call "
+        "<font face='Courier'>/api/v2/lawyer/lex/*</font> or show a LEX widget on the lawyer dashboard.",
         bg=OK_BG, accent=TEAL, icon="START HERE",
     ))
 
@@ -803,8 +805,11 @@ def build():
     story.append(Paragraph("Deleted / do not use", S["H2"]))
     story.append(make_table(
         ["Method", "Path", "Why"],
-        [["WS", "/api/lex/ws", "Local dev only — Vercel has no WebSockets"]],
-        [22 * mm, 45 * mm, usable - 67 * mm],
+        [
+            ["WS", "/api/lex/ws", "Local dev only — Vercel has no WebSockets"],
+            ["—", "/api/v2/lawyer/lex/*", "Counsel LEX out of scope — do not integrate"],
+        ],
+        [22 * mm, 50 * mm, usable - 72 * mm],
     ))
     story.append(Spacer(1, 8 * mm))
     story.append(CalloutBox(
