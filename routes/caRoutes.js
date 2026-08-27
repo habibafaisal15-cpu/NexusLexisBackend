@@ -33,6 +33,10 @@ function requireCA(req, res) {
 
 export function createCaRouter(uploadsDir = 'uploads/') {
   const upload = multer({ dest: uploadsDir });
+  const memoryUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 8 * 1024 * 1024 },
+  });
   const router = Router();
 
 
@@ -165,6 +169,34 @@ export function createCaRouter(uploadsDir = 'uploads/') {
 
     res.json(await pro.updateCaOrderMilestone(userId, req.params.orderId, req.body.milestone));
 
+  }));
+
+  router.post('/orders/:orderId/deliver', authMiddleware, memoryUpload.single('document'), asyncHandler(async (req, res) => {
+    const userId = requireCA(req, res);
+    if (!userId) return;
+    const { deliverCaOrder } = await import('../db/appointmentService.js');
+    try {
+      const result = await deliverCaOrder(userId, req.params.orderId, req.file);
+      if (!result) return res.status(404).json({ error: 'Order not found' });
+      res.json(result);
+    } catch (err) {
+      return res.status(err.status || 400).json({ error: err.message });
+    }
+  }));
+
+  // PDF alias: POST /api/lawyers/assigned-orders/{id}/upload/ style for CA workspace
+  router.post('/assigned-orders/:orderId/upload', authMiddleware, memoryUpload.single('document'), asyncHandler(async (req, res) => {
+    const userId = requireCA(req, res);
+    if (!userId) return;
+    const file = req.file || (req.files && req.files[0]);
+    const { deliverCaOrder } = await import('../db/appointmentService.js');
+    try {
+      const result = await deliverCaOrder(userId, req.params.orderId, file);
+      if (!result) return res.status(404).json({ error: 'Order not found' });
+      res.json(result);
+    } catch (err) {
+      return res.status(err.status || 400).json({ error: err.message });
+    }
   }));
 
 

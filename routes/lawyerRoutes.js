@@ -133,6 +133,21 @@ export function createLawyerRouter(lexApiUrl, uploadsDir = 'uploads/') {
     }
   }));
 
+  // PDF contract alias: POST /api/lawyers/assigned-orders/{id}/upload/
+  router.post('/assigned-orders/:orderId/upload', authMiddleware, memoryUpload.single('document'), asyncHandler(async (req, res) => {
+    const userId = requireLawyer(req, res);
+    if (!userId) return;
+    const file = req.file;
+    const { deliverLawyerOrder } = await import('../db/appointmentService.js');
+    try {
+      const result = await deliverLawyerOrder(userId, req.params.orderId, file);
+      if (!result) return res.status(404).json({ error: 'Order not found' });
+      res.json(result);
+    } catch (err) {
+      return res.status(err.status || 400).json({ error: err.message });
+    }
+  }));
+
   router.post('/orders/:orderId/esign', authMiddleware, asyncHandler(async (req, res) => {
     const userId = requireLawyer(req, res);
     if (!userId) return;

@@ -90,6 +90,24 @@ export function adminMiddleware(req, res, next) {
   return next();
 }
 
+/** Full Admin vs Drafting Desk–only RegistryStaff (role-key isolation). */
+export function isFullAdmin(req) {
+  const role = req.user?.role || req.user?.activeRole;
+  const roles = Array.isArray(req.user?.roles) ? req.user.roles : [];
+  const header = String(req.headers['x-client-role'] || '');
+  if (roles.includes('RegistryStaff') || header === 'RegistryStaff') {
+    // RegistryStaff is drafting-desk only unless also Admin
+    if (role === 'admin' || roles.includes('Admin') || header === 'Admin') return true;
+    return false;
+  }
+  return role === 'admin' || roles.includes('Admin') || header === 'Admin';
+}
+
+/** Unauthorized admin rooms return empty payloads (no locked-page signal). */
+export function emptyAdminRoom(res, room, extra = {}) {
+  return res.json({ success: true, room, empty: true, ...extra });
+}
+
 /** Attach user if Bearer token is valid; never reject (for owned flags on public catalogs). */
 export function optionalAuthMiddleware(req, _res, next) {
   const authHeader = req.headers.authorization;

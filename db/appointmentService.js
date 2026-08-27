@@ -790,6 +790,9 @@ export async function patchLawyerAppointment(lawyerProfId, appointmentId, body =
 }
 
 export async function deliverCustomDraft(lawyerUserId, lawyerProfId, appointmentId, { file, title, notes } = {}) {
+  const { ensureAdminPortalSchema } = await import('./ensureAdminPortalSchema.js');
+  await ensureAdminPortalSchema();
+
   const existing = await query(
     `SELECT a.*, lp.full_name AS lawyer_name
      FROM appointments a
@@ -842,14 +845,15 @@ export async function deliverCustomDraft(lawyerUserId, lawyerProfId, appointment
   await query(
     `INSERT INTO service_orders (
        order_number, client_id, service_id, assigned_prof_id, status, intake_form_data,
-       completed_file, milestone, expected_delivery
-     ) VALUES ($1, $2, $3, $4, 'completed', $5::jsonb, $6, 'Delivered custom draft', CURRENT_TIMESTAMP)
+       completed_file, milestone, expected_delivery, remittance_status
+     ) VALUES ($1, $2, $3, $4, 'completed', $5::jsonb, $6, 'Delivered custom draft', CURRENT_TIMESTAMP, 'pending_payout')
      ON CONFLICT (order_number) DO UPDATE SET
        status = 'completed',
        intake_form_data = EXCLUDED.intake_form_data,
        completed_file = EXCLUDED.completed_file,
        milestone = EXCLUDED.milestone,
-       assigned_prof_id = EXCLUDED.assigned_prof_id`,
+       assigned_prof_id = EXCLUDED.assigned_prof_id,
+       remittance_status = 'pending_payout'`,
     [
       orderNumber,
       appt.client_id,
@@ -864,7 +868,8 @@ export async function deliverCustomDraft(lawyerUserId, lawyerProfId, appointment
     `UPDATE appointments
      SET status = 'completed',
          delivered_order_number = $1,
-         response_note = COALESCE($2, response_note)
+         response_note = COALESCE($2, response_note),
+         remittance_status = 'pending_payout'
      WHERE id = $3`,
     [orderNumber, notes || null, appt.id]
   );
@@ -890,20 +895,27 @@ export async function deliverCustomDraft(lawyerUserId, lawyerProfId, appointment
   };
 }
 
-export async function deliverLawyerOrder(lawyerUserId, orderId, file) {
+/** Shared Drafting Desk delivery — DOCX/PDF upload → My Documents + settlement queue. */
+export async function deliverAssignedOrder(professionalUserId, orderId, file, { actorLabel = 'professional' } = {}) {
+  const { ensureAdminPortalSchema } = await import('./ensureAdminPortalSchema.js');
+  await ensureAdminPortalSchema();
+
   const result = await query(
-    `SELECT so.id, so.order_number, so.client_id, so.intake_form_data
+    `SELECT so.id, so.order_number, so.client_id, so.intake_form_data, s.name AS service_name
      FROM service_orders so
+     LEFT JOIN services s ON s.id = so.service_id
      WHERE (so.id::text = $1 OR so.order_number = $1)
        AND so.assigned_prof_id = $2`,
-    [String(orderId), lawyerUserId]
+    [String(orderId), professionalUserId]
   );
   const order = result.rows[0];
   if (!order) return null;
-  if (!file?.buffer) throw new AppointmentError('document file is required');
+  if (!file?.buffer) throw new AppointmentError('document file is required (DOCX/PDF)');
 
+  const title = order.intake_form_data?.title || order.service_name || 'Draft document';
   const formData = {
     ...(order.intake_form_data || {}),
+    title,
     deliveredFileName: file.originalname || 'document.pdf',
     deliveredMimeType: file.mimetype || 'application/pdf',
     deliveredFileBase64: file.buffer.toString('base64'),
@@ -915,10 +927,43 @@ export async function deliverLawyerOrder(lawyerUserId, orderId, file) {
      SET status = 'completed',
          intake_form_data = $1::jsonb,
          completed_file = COALESCE(NULLIF(completed_file, ''), $2),
-         milestone = 'Delivered by lawyer'
-     WHERE id = $3`,
-    [JSON.stringify(formData), `custom:${order.order_number}`, order.id]
+         milestone = $3,
+         remittance_status = 'pending_payout',
+         settled_at = NULL
+     WHERE id = $4`,
+    [
+      JSON.stringify(formData),
+      `custom:${order.order_number}`,
+      `Delivered by ${actorLabel}`,
+      order.id,
+    ]
   );
 
-  return { success: true, orderId: order.order_number, file: file.originalname };
+  // My Nexus (client portal) delivery notification
+  await query(
+    `INSERT INTO notifications (user_id, title, body, notification_type, link, audience)
+     VALUES ($1, $2, $3, 'document', '/account/documents', 'client')`,
+    [
+      order.client_id,
+      'Document ready',
+      `"${title}" has been delivered to My Documents.`,
+    ]
+  );
+
+  return {
+    success: true,
+    orderId: order.order_number,
+    orderNumber: order.order_number,
+    file: file.originalname,
+    remittanceStatus: 'pending_payout',
+    settlement: { status: 'pending_payout', triggered: true },
+  };
+}
+
+export async function deliverLawyerOrder(lawyerUserId, orderId, file) {
+  return deliverAssignedOrder(lawyerUserId, orderId, file, { actorLabel: 'lawyer' });
+}
+
+export async function deliverCaOrder(caUserId, orderId, file) {
+  return deliverAssignedOrder(caUserId, orderId, file, { actorLabel: 'ca' });
 }

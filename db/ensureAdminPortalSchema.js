@@ -33,6 +33,9 @@ export async function ensureAdminPortalSchema() {
     await query(`ALTER TABLE service_orders ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMPTZ`);
     await query(`ALTER TABLE service_orders ADD COLUMN IF NOT EXISTS acceptance_deadline TIMESTAMPTZ`);
     await query(`ALTER TABLE service_orders ADD COLUMN IF NOT EXISTS drafting_room VARCHAR(40) DEFAULT 'drafting_desk'`);
+    await query(`ALTER TABLE service_orders ADD COLUMN IF NOT EXISTS remittance_status VARCHAR(30) DEFAULT 'not_applicable'`);
+    await query(`ALTER TABLE service_orders ADD COLUMN IF NOT EXISTS settled_at TIMESTAMPTZ`);
+    await query(`ALTER TABLE service_orders ADD COLUMN IF NOT EXISTS settlement_note TEXT`);
     await query(`ALTER TABLE appointments ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMPTZ`);
     await query(`ALTER TABLE appointments ADD COLUMN IF NOT EXISTS acceptance_deadline TIMESTAMPTZ`);
   })().catch((err) => {

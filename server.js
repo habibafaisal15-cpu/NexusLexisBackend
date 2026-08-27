@@ -418,6 +418,109 @@ app.get('/api/v2/knowledge/articles/:slug', asyncHandler(async (req, res) => {
   }
 }));
 
+// ── PDF contract aliases (nexus_lexis_admin_flows.pdf) ──────────────────────
+// Drafting Desk FE/admin queue alias
+app.get('/api/v2/admin-panel/orders', authMiddleware, adminMiddleware, asyncHandler(async (req, res) => {
+  const { listDraftingDeskOrders } = await import('./db/draftingDeskService.js');
+  res.json(await listDraftingDeskOrders(req.query || {}));
+}));
+app.get('/admin-panel/orders', authMiddleware, adminMiddleware, asyncHandler(async (req, res) => {
+  const { listDraftingDeskOrders } = await import('./db/draftingDeskService.js');
+  res.json(await listDraftingDeskOrders(req.query || {}));
+}));
+
+// Knowledge manage + public articles (short /api/knowledge/* paths from PDF)
+app.get('/api/knowledge/articles', asyncHandler(async (req, res) => {
+  const { listKnowledgeArticles } = await import('./db/knowledgeContentService.js');
+  res.json(await listKnowledgeArticles(req.query || {}, { publicOnly: true }));
+}));
+app.get('/api/knowledge/articles/:slug', asyncHandler(async (req, res) => {
+  const { getKnowledgeArticleBySlug } = await import('./db/knowledgeContentService.js');
+  try {
+    res.json(await getKnowledgeArticleBySlug(req.params.slug, { publicOnly: true }));
+  } catch (err) {
+    return res.status(err.status || 400).json({ error: err.message });
+  }
+}));
+app.get('/api/knowledge/manage', authMiddleware, adminMiddleware, asyncHandler(async (req, res) => {
+  const { isFullAdmin, emptyAdminRoom } = await import('./middleware/auth.js');
+  if (!isFullAdmin(req)) {
+    return emptyAdminRoom(res, 'knowledge', { articles: [], pagination: { page: 1, limit: 20, totalItems: 0, totalPages: 0, hasNext: false, hasPrev: false } });
+  }
+  const { listKnowledgeArticles } = await import('./db/knowledgeContentService.js');
+  res.json(await listKnowledgeArticles(req.query || {}, { publicOnly: false }));
+}));
+app.post('/api/knowledge/manage', authMiddleware, adminMiddleware, asyncHandler(async (req, res) => {
+  const { isFullAdmin, emptyAdminRoom } = await import('./middleware/auth.js');
+  if (!isFullAdmin(req)) return emptyAdminRoom(res, 'knowledge', { article: null });
+  const { createKnowledgeArticle } = await import('./db/knowledgeContentService.js');
+  try {
+    res.status(201).json(await createKnowledgeArticle(req.body || {}));
+  } catch (err) {
+    return res.status(err.status || 400).json({ error: err.message });
+  }
+}));
+app.patch('/api/knowledge/manage/:idOrSlug', authMiddleware, adminMiddleware, asyncHandler(async (req, res) => {
+  const { isFullAdmin, emptyAdminRoom } = await import('./middleware/auth.js');
+  if (!isFullAdmin(req)) return emptyAdminRoom(res, 'knowledge', { article: null });
+  const { updateKnowledgeArticle } = await import('./db/knowledgeContentService.js');
+  try {
+    res.json(await updateKnowledgeArticle(req.params.idOrSlug, req.body || {}));
+  } catch (err) {
+    return res.status(err.status || 400).json({ error: err.message });
+  }
+}));
+app.delete('/api/knowledge/manage/:idOrSlug', authMiddleware, adminMiddleware, asyncHandler(async (req, res) => {
+  const { isFullAdmin, emptyAdminRoom } = await import('./middleware/auth.js');
+  if (!isFullAdmin(req)) return emptyAdminRoom(res, 'knowledge', { article: null });
+  const { deleteKnowledgeArticle } = await import('./db/knowledgeContentService.js');
+  try {
+    res.json(await deleteKnowledgeArticle(req.params.idOrSlug));
+  } catch (err) {
+    return res.status(err.status || 400).json({ error: err.message });
+  }
+}));
+
+// PDF: POST /api/lawyers/assigned-orders/{id}/upload/
+const assignedOrderUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 8 * 1024 * 1024 },
+});
+app.post(
+  '/api/lawyers/assigned-orders/:orderId/upload',
+  authMiddleware,
+  assignedOrderUpload.single('document'),
+  asyncHandler(async (req, res) => {
+    const userId = Number(req.user?.userId || req.user?.sub);
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const { deliverLawyerOrder } = await import('./db/appointmentService.js');
+    try {
+      const result = await deliverLawyerOrder(userId, req.params.orderId, req.file);
+      if (!result) return res.status(404).json({ error: 'Order not found' });
+      res.json(result);
+    } catch (err) {
+      return res.status(err.status || 400).json({ error: err.message });
+    }
+  })
+);
+app.post(
+  '/api/lawyers/assigned-orders/:orderId/upload/',
+  authMiddleware,
+  assignedOrderUpload.single('document'),
+  asyncHandler(async (req, res) => {
+    const userId = Number(req.user?.userId || req.user?.sub);
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const { deliverLawyerOrder } = await import('./db/appointmentService.js');
+    try {
+      const result = await deliverLawyerOrder(userId, req.params.orderId, req.file);
+      if (!result) return res.status(404).json({ error: 'Order not found' });
+      res.json(result);
+    } catch (err) {
+      return res.status(err.status || 400).json({ error: err.message });
+    }
+  })
+);
+
 // NL-BE-ADMIN-OVERSIGHT-001 — Appointment Oversight (same appointments rows)
 app.get('/api/v2/admin/appointments/stats', authMiddleware, adminMiddleware, asyncHandler(async (req, res) => {
   const { getAdminAppointmentStats } = await import('./db/adminAppointmentOversight.js');

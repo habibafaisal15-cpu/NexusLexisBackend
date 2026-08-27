@@ -669,16 +669,73 @@ export async function reassignAdminAppointment(appointmentId, body = {}, adminAc
 }
 
 export async function listAssignableProfessionals(filters = {}) {
+  const type = String(filters.professionalType || 'lawyer').toLowerCase();
+
+  if (type === 'ca' || type === 'charteredaccountant' || type === 'accountant') {
+    const params = [];
+    const where = [
+      'COALESCE(cp.is_suspended, FALSE) = FALSE',
+      'u.is_active = TRUE',
+    ];
+    if (filters.excludeProfileId) {
+      params.push(Number(filters.excludeProfileId));
+      where.push(`cp.id <> $${params.length}`);
+    }
+    if (filters.city) {
+      params.push(`%${String(filters.city)}%`);
+      where.push(`cp.city ILIKE $${params.length}`);
+    }
+    if (filters.search) {
+      params.push(`%${String(filters.search).trim()}%`);
+      where.push(`(cp.full_name ILIKE $${params.length} OR COALESCE(cp.service_areas, '') ILIKE $${params.length} OR COALESCE(cp.qualification, '') ILIKE $${params.length})`);
+    }
+    const result = await query(
+      `SELECT cp.id, cp.full_name, cp.service_areas, cp.qualification, cp.city, cp.verification_stat,
+              (
+                SELECT COUNT(*)::int FROM service_orders so
+                WHERE so.assigned_prof_id = cp.user_id
+                  AND so.status IN ('processing', 'in_progress', 'pending_payment')
+              ) AS current_load
+       FROM ca_profiles cp
+       JOIN users u ON u.id = cp.user_id
+       WHERE ${where.join(' AND ')}
+       ORDER BY
+         CASE WHEN cp.verification_stat = 'verified' THEN 0 ELSE 1 END,
+         current_load ASC,
+         cp.full_name ASC
+       LIMIT 100`,
+      params
+    );
+    return {
+      success: true,
+      professionals: result.rows.map((row) => {
+        const load = row.current_load || 0;
+        return {
+          id: String(row.id),
+          name: row.full_name,
+          professionalType: 'ca',
+          practiceArea: row.service_areas || row.qualification || null,
+          experienceYears: null,
+          availability: load >= 8 ? 'Busy' : 'Available today',
+          currentLoad: load,
+          rating: null,
+          status: load >= 8 ? 'busy' : 'available',
+          city: row.city || null,
+          verificationStatus: row.verification_stat || null,
+        };
+      }),
+    };
+  }
+
+  if (type && type !== 'lawyer' && type !== 'consultant' && type !== 'all') {
+    return { success: true, professionals: [] };
+  }
+
   const params = [];
   const where = [
     'COALESCE(lp.is_suspended, FALSE) = FALSE',
     'u.is_active = TRUE',
   ];
-
-  const type = String(filters.professionalType || 'lawyer').toLowerCase();
-  if (type && type !== 'lawyer' && type !== 'consultant') {
-    return { success: true, professionals: [] };
-  }
 
   if (filters.excludeProfileId) {
     params.push(Number(filters.excludeProfileId));

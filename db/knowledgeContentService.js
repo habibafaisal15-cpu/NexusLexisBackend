@@ -109,7 +109,41 @@ export async function getKnowledgeArticleBySlug(slugOrId, { publicOnly = false }
     err.status = 404;
     throw err;
   }
-  return { success: true, article: mapArticle(row, { includeBody: true }) };
+  const article = mapArticle(row, { includeBody: true });
+  // Conversion panel: resolve related paid drafting/consultation services
+  const slugs = article.relatedServiceSlugs || [];
+  let relatedServices = [];
+  if (slugs.length) {
+    const services = await query(
+      `SELECT slug, name, access_type, block, price
+       FROM services
+       WHERE slug = ANY($1::text[]) AND COALESCE(is_active, TRUE) = TRUE`,
+      [slugs]
+    );
+    relatedServices = services.rows.map((s) => ({
+      slug: s.slug,
+      name: s.name,
+      accessType: s.access_type,
+      block: s.block,
+      price: s.price != null ? Number(s.price) : null,
+      href: s.access_type === 'public'
+        ? `/knowledge-bank/${s.slug}`
+        : `/library/${s.slug}`,
+    }));
+  }
+  return {
+    success: true,
+    article: {
+      ...article,
+      relatedServices,
+      seo: {
+        title: article.seoTitle,
+        description: article.seoDescription,
+        keywords: article.keywords,
+        schemaType: 'LegalArticle',
+      },
+    },
+  };
 }
 
 export async function createKnowledgeArticle(body = {}) {

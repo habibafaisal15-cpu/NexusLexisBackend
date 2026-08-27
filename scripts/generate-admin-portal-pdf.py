@@ -207,7 +207,7 @@ def on_page(canvas, doc):
     canvas.rect(0, 12 * mm, PAGE_W, 1.1, fill=1, stroke=0)
     canvas.setFillColor(MUTED)
     canvas.setFont(BODY, 8)
-    canvas.drawString(MARGIN_L, 5 * mm, "Internal  ·  25 August 2026")
+    canvas.drawString(MARGIN_L, 5 * mm, "Internal  ·  27 August 2026")
     canvas.drawRightString(PAGE_W - MARGIN_R, 5 * mm, f"Page {doc.page - 1}")
     canvas.restoreState()
 
@@ -226,7 +226,7 @@ def build():
     ))
     story.append(Spacer(1, 12 * mm))
     story.append(Paragraph(
-        "Document ID: NL-FE-ADMIN-PORTAL-001<br/>Version 1.0 · 25 August 2026<br/>Auth: JWT + X-Client-Role: Admin",
+        "Document ID: NL-FE-ADMIN-PORTAL-001<br/>Version 1.1 · 27 August 2026<br/>Auth: JWT + X-Client-Role: Admin | RegistryStaff",
         S["CoverMeta"],
     ))
     story.append(Paragraph("<pagebreak/>", ParagraphStyle("pb", fontSize=1)))
@@ -305,6 +305,9 @@ def build():
             ["GET", "/api/v2/admin/drafting-desk/stats"],
             ["GET", "/api/v2/admin/drafting-desk/orders"],
             ["POST", "/api/v2/admin/drafting-desk/orders/assign"],
+            ["GET/POST", "/admin/drafting-desk/settlements + /remit"],
+            ["POST", "/api/lawyers/assigned-orders/:id/upload/"],
+            ["CRUD", "/api/knowledge/manage (PDF alias)"],
             ["CRUD", "/api/v2/admin/knowledge/articles[/:idOrSlug]"],
             ["GET", "/api/v2/knowledge/articles[/:slug]  (public)"],
             ["GET", "/api/v2/admin/lex/stats | /sessions"],

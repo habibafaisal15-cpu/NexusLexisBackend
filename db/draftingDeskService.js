@@ -252,6 +252,13 @@ export async function getDraftingDeskStats() {
   ]);
   const c = custom.rows[0] || {};
   const o = orders.rows[0] || {};
+  const settlements = await query(`
+    SELECT COUNT(*)::int AS pending
+    FROM service_orders
+    WHERE status = 'completed'
+      AND COALESCE(remittance_status, 'not_applicable') = 'pending_payout'
+      AND (completed_file IS NULL OR completed_file NOT LIKE 'library:%')
+  `);
   return {
     success: true,
     stats: {
@@ -261,8 +268,10 @@ export async function getDraftingDeskStats() {
       completed: (c.completed || 0) + (o.completed || 0),
       slaBreached: c.sla_breached || 0,
       unassigned: o.unassigned || 0,
+      pendingSettlement: settlements.rows[0]?.pending || 0,
       customDocs: c.total || 0,
       serviceOrders: o.total || 0,
+      slaHours: ACCEPTANCE_WINDOW_HOURS,
     },
   };
 }
@@ -370,6 +379,92 @@ export async function assignDraftingDeskOrder(body = {}, adminActor = {}) {
       assignedAt: row.assigned_at,
       acceptanceDeadline: row.acceptance_deadline,
       slaHours: ACCEPTANCE_WINDOW_HOURS,
+    },
+  };
+}
+
+/** Ledger settlement queue after delivery (fee remittance). */
+export async function listDraftingDeskSettlements(filters = {}) {
+  await ensureAdminPortalSchema();
+  const status = filters.status ? String(filters.status).toLowerCase() : 'pending_payout';
+  const params = [status];
+  const result = await query(
+    `SELECT so.id, so.order_number, so.status, so.remittance_status, so.settled_at, so.settlement_note,
+            so.intake_form_data, s.name AS service_name,
+            u.username AS client_name, u.email AS client_email,
+            COALESCE(lp.full_name, cp.full_name) AS professional_name,
+            CASE WHEN cp.id IS NOT NULL THEN 'ca' ELSE 'lawyer' END AS professional_type
+     FROM service_orders so
+     JOIN services s ON s.id = so.service_id
+     JOIN users u ON u.id = so.client_id
+     LEFT JOIN lawyer_profiles lp ON lp.user_id = so.assigned_prof_id
+     LEFT JOIN ca_profiles cp ON cp.user_id = so.assigned_prof_id
+     WHERE so.status = 'completed'
+       AND COALESCE(so.remittance_status, 'not_applicable') = $1
+       AND (so.completed_file IS NULL OR so.completed_file NOT LIKE 'library:%')
+     ORDER BY so.id DESC
+     LIMIT 200`,
+    params
+  );
+  return {
+    success: true,
+    settlements: result.rows.map((row) => ({
+      id: String(row.id),
+      orderNumber: row.order_number,
+      orderStatus: row.status,
+      remittanceStatus: row.remittance_status,
+      settledAt: row.settled_at,
+      settlementNote: row.settlement_note,
+      subject: row.service_name || row.intake_form_data?.title || 'Draft',
+      client: { name: row.client_name, email: row.client_email },
+      professional: {
+        name: row.professional_name,
+        type: row.professional_type,
+      },
+    })),
+  };
+}
+
+export async function settleDraftingDeskOrder(orderNumber, body = {}, adminActor = {}) {
+  await ensureAdminPortalSchema();
+  const note = body.note || body.settlementNote || `Settled by ${adminActor.name || adminActor.email || 'admin'}`;
+  const updated = await query(
+    `UPDATE service_orders
+     SET remittance_status = 'remitted',
+         settled_at = CURRENT_TIMESTAMP,
+         settlement_note = $2
+     WHERE (order_number = $1 OR id::text = $1)
+       AND status = 'completed'
+     RETURNING id, order_number, remittance_status, settled_at, settlement_note, assigned_prof_id, client_id`,
+    [String(orderNumber), note]
+  );
+  if (!updated.rows[0]) {
+    const err = new Error('Completed order not found');
+    err.status = 404;
+    throw err;
+  }
+  const row = updated.rows[0];
+  if (row.assigned_prof_id) {
+    await query(
+      `INSERT INTO notifications (user_id, title, body, notification_type, link, audience)
+       VALUES ($1, 'Fee remittance processed', $2, 'order', '/account/orders', 'lawyer')`,
+      [row.assigned_prof_id, `Settlement completed for order ${row.order_number}.`]
+    );
+  }
+  // Also mark linked appointment if custom draft
+  await query(
+    `UPDATE appointments
+     SET remittance_status = 'remitted'
+     WHERE delivered_order_number = $1`,
+    [row.order_number]
+  );
+  return {
+    success: true,
+    settlement: {
+      orderNumber: row.order_number,
+      remittanceStatus: row.remittance_status,
+      settledAt: row.settled_at,
+      settlementNote: row.settlement_note,
     },
   };
 }
