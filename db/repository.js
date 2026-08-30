@@ -302,12 +302,15 @@ function buildLibraryFilterSql({
   language,
   includeInactive = false,
   accessType = null,
+  onlyInactive = false,
 } = {}) {
   const normalizedAccess = accessType ? normalizeAccessType(accessType, { fallback: null }) : null;
   const params = [];
   let where = ' WHERE s.id IS NOT NULL';
 
-  if (!includeInactive) {
+  if (onlyInactive) {
+    where += ' AND COALESCE(s.is_active, TRUE) IS FALSE';
+  } else if (!includeInactive) {
     where += ' AND COALESCE(s.is_active, TRUE) IS TRUE';
   }
 
@@ -351,6 +354,7 @@ export async function getLibraryCatalog({
   block,
   language,
   includeInactive = false,
+  onlyInactive = false,
   accessType = null,
   clientId = null,
   paginate = false,
@@ -364,6 +368,7 @@ export async function getLibraryCatalog({
     block,
     language,
     includeInactive,
+    onlyInactive,
     accessType,
   });
 
@@ -470,12 +475,24 @@ export async function getLibraryCatalog({
   if (includeInactive) {
     const summary = await query(`
       SELECT
-        COUNT(*) FILTER (WHERE access_type = 'paid')::int AS paid,
-        COUNT(*) FILTER (WHERE access_type = 'public')::int AS public,
+        COUNT(*) FILTER (WHERE access_type = 'paid' AND COALESCE(is_active, TRUE) IS TRUE)::int AS paid,
+        COUNT(*) FILTER (WHERE access_type = 'public' AND COALESCE(is_active, TRUE) IS TRUE)::int AS public,
         COUNT(*) FILTER (WHERE COALESCE(is_active, TRUE) IS FALSE)::int AS inactive
       FROM services
     `);
-    payload.counts = summary.rows[0] || { paid: 0, public: 0, inactive: 0 };
+    let draftCount = 0;
+    try {
+      const { countLibraryDrafts } = await import('./libraryDraftService.js');
+      draftCount = await countLibraryDrafts();
+    } catch {
+      draftCount = 0;
+    }
+    payload.counts = {
+      paid: summary.rows[0]?.paid || 0,
+      public: summary.rows[0]?.public || 0,
+      inactive: summary.rows[0]?.inactive || 0,
+      draft: draftCount,
+    };
   }
 
   return payload;

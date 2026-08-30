@@ -73,12 +73,62 @@ export function createAdminLibraryRouter() {
   router.use(authMiddleware, adminMiddleware);
 
   router.get('/catalog', asyncHandler(async (req, res) => {
-    const accessType = req.query.accessType
+    const status = String(req.query.status || '').toLowerCase().trim();
+    const { page, limit } = parsePagination(req.query);
+
+    // NL-BE-LIB-DRAFT-001 — Drafts tab
+    if (status === 'draft') {
+      const { listLibraryDrafts, countLibraryDrafts } = await import('../db/libraryDraftService.js');
+      const drafts = await listLibraryDrafts({
+        search: req.query.search,
+        page,
+        limit,
+      });
+      const summary = await repo.getLibraryCatalog({
+        includeInactive: true,
+        paginate: true,
+        page: 1,
+        limit: 1,
+      });
+      return res.json({
+        status: 'draft',
+        accessType: null,
+        categories: [],
+        documents: drafts.documents,
+        templates: drafts.documents,
+        templateCount: drafts.pagination.totalItems,
+        counts: {
+          ...(summary.counts || { paid: 0, public: 0, inactive: 0 }),
+          draft: await countLibraryDrafts(),
+        },
+        filters: { categories: [], blocks: [], languages: [] },
+        pagination: drafts.pagination,
+      });
+    }
+
+    let accessType = req.query.accessType
       ? parseAccessType(req.query.accessType, null)
       : null;
-    const { page, limit } = parsePagination(req.query);
-    res.json(await repo.getLibraryCatalog({
-      includeInactive: true,
+    let includeInactive = true;
+    let onlyInactive = false;
+
+    if (status === 'active') {
+      includeInactive = false;
+      accessType = accessType || null;
+    } else if (status === 'paid') {
+      accessType = 'paid';
+      includeInactive = false;
+    } else if (status === 'public') {
+      accessType = 'public';
+      includeInactive = false;
+    } else if (status === 'inactive') {
+      onlyInactive = true;
+      includeInactive = true;
+    }
+
+    const catalog = await repo.getLibraryCatalog({
+      includeInactive,
+      onlyInactive,
       accessType: accessType || undefined,
       category: req.query.category,
       search: req.query.search,
@@ -87,7 +137,66 @@ export function createAdminLibraryRouter() {
       paginate: true,
       page,
       limit,
-    }));
+    });
+
+    if (!catalog.counts) {
+      const full = await repo.getLibraryCatalog({
+        includeInactive: true,
+        paginate: true,
+        page: 1,
+        limit: 1,
+      });
+      catalog.counts = full.counts;
+    }
+
+    res.json(catalog);
+  }));
+
+  // ── Library drafts (NL-BE-LIB-DRAFT-001) ─────────────────────────────────
+  router.post('/drafts', upload.single('file'), asyncHandler(async (req, res) => {
+    const { createLibraryDraft, LibraryDraftError } = await import('../db/libraryDraftService.js');
+    try {
+      const draft = await createLibraryDraft(
+        req.body || {},
+        filePayload(req.file),
+        Number(req.user?.userId || req.user?.sub) || null
+      );
+      res.status(201).json(draft);
+    } catch (err) {
+      const status = err instanceof LibraryDraftError ? err.status : (err.status || 400);
+      return res.status(status).json({ error: err.message, ...(err.extra || {}) });
+    }
+  }));
+
+  router.put('/drafts/:id', upload.single('file'), asyncHandler(async (req, res) => {
+    const { updateLibraryDraft, LibraryDraftError } = await import('../db/libraryDraftService.js');
+    try {
+      const draft = await updateLibraryDraft(req.params.id, req.body || {}, filePayload(req.file));
+      res.json(draft);
+    } catch (err) {
+      const status = err instanceof LibraryDraftError ? err.status : (err.status || 400);
+      return res.status(status).json({ error: err.message, ...(err.extra || {}) });
+    }
+  }));
+
+  router.get('/drafts/:id', asyncHandler(async (req, res) => {
+    const { getLibraryDraft, LibraryDraftError } = await import('../db/libraryDraftService.js');
+    try {
+      res.json(await getLibraryDraft(req.params.id));
+    } catch (err) {
+      const status = err instanceof LibraryDraftError ? err.status : (err.status || 400);
+      return res.status(status).json({ error: err.message, ...(err.extra || {}) });
+    }
+  }));
+
+  router.delete('/drafts/:id', asyncHandler(async (req, res) => {
+    const { deleteLibraryDraft, LibraryDraftError } = await import('../db/libraryDraftService.js');
+    try {
+      res.json(await deleteLibraryDraft(req.params.id));
+    } catch (err) {
+      const status = err instanceof LibraryDraftError ? err.status : (err.status || 400);
+      return res.status(status).json({ error: err.message, ...(err.extra || {}) });
+    }
   }));
 
   router.post('/categories', asyncHandler(async (req, res) => {
@@ -133,28 +242,53 @@ export function createAdminLibraryRouter() {
     asyncHandler(async (req, res) => {
       const intakeSchema = parseJsonField(req.body.intakeSchema, undefined);
       const accessType = parseAccessType(req.body.accessType || req.body.type, 'paid');
-      const template = await repo.createLibraryTemplate({
-        name: req.body.name,
-        slug: req.body.slug,
-        categorySlug: req.body.categorySlug,
-        categoryId: req.body.categoryId,
-        price: req.body.price,
-        deliveryDays: req.body.deliveryDays,
-        description: req.body.description,
-        intakeSchema,
-        accessType,
-        code: req.body.code,
-        block: req.body.block,
-        language: req.body.language || req.body.lang,
-        author: req.body.author || req.body.lawyer,
-        lawyerProfileId: req.body.lawyerProfileId
-          || req.body.lawyerId
-          || req.body.authorProfileId,
-        version: req.body.version,
-        isActive: parseBoolean(req.body.isActive ?? req.body.active, true),
-        file: filePayload(req.file),
-      });
-      res.status(201).json({ template });
+      try {
+        const template = await repo.createLibraryTemplate({
+          name: req.body.name,
+          slug: req.body.slug,
+          categorySlug: req.body.categorySlug,
+          categoryId: req.body.categoryId,
+          price: req.body.price,
+          deliveryDays: req.body.deliveryDays,
+          description: req.body.description,
+          intakeSchema,
+          accessType,
+          code: req.body.code,
+          block: req.body.block,
+          language: req.body.language || req.body.lang,
+          author: req.body.author || req.body.lawyer,
+          lawyerProfileId: req.body.lawyerProfileId
+            || req.body.lawyerId
+            || req.body.authorProfileId,
+          version: req.body.version,
+          isActive: parseBoolean(req.body.isActive ?? req.body.active, true),
+          file: filePayload(req.file),
+        });
+        // Optional: remove draft after successful publish
+        const draftId = req.body.draftId || req.body.draft_id;
+        if (draftId) {
+          try {
+            const { deleteLibraryDraft } = await import('../db/libraryDraftService.js');
+            await deleteLibraryDraft(draftId);
+          } catch {
+            // publish succeeded; draft cleanup is best-effort
+          }
+        }
+        res.status(201).json({ template });
+      } catch (err) {
+        const msg = err.message || 'Failed to create template';
+        if (/required|price|category|author|lawyer/i.test(msg)) {
+          return res.status(422).json({
+            error: 'Validation failed',
+            message: msg,
+            fields: {},
+          });
+        }
+        if (/unique|duplicate|already exists/i.test(msg)) {
+          return res.status(409).json({ error: msg });
+        }
+        throw err;
+      }
     })
   );
 
@@ -228,6 +362,12 @@ export function createAdminLibraryRouter() {
   );
 
   router.delete('/templates/:idOrSlug', asyncHandler(async (req, res) => {
+    if (req.query.hard === 'true' || req.query.hard === '1') {
+      const { hardDeleteLibraryTemplate } = await import('../db/repository.js');
+      const deleted = await hardDeleteLibraryTemplate(req.params.idOrSlug);
+      if (!deleted) return res.status(404).json({ error: 'Template not found' });
+      return res.json({ ok: true, hardDeleted: true });
+    }
     const template = await repo.deactivateLibraryTemplate(req.params.idOrSlug);
     if (!template) {
       return res.status(404).json({ error: 'Template not found' });

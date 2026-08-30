@@ -54,6 +54,33 @@ export async function ensureLibrarySchema() {
     await query('CREATE INDEX IF NOT EXISTS idx_services_language ON services (language)');
     await query('CREATE INDEX IF NOT EXISTS idx_services_lawyer_profile ON services (lawyer_profile_id)');
 
+    // NL-BE-LIB-DRAFT-001 — separate draft entity (never in client/public catalogs)
+    await query(`
+      CREATE TABLE IF NOT EXISTS library_template_drafts (
+        id BIGSERIAL PRIMARY KEY,
+        draft_key VARCHAR(80) UNIQUE NOT NULL,
+        name VARCHAR(500),
+        code VARCHAR(100),
+        access_type VARCHAR(20),
+        category_slug VARCHAR(255),
+        block VARCHAR(100),
+        language VARCHAR(100),
+        price DECIMAL(10, 2),
+        version VARCHAR(50),
+        author VARCHAR(255),
+        lawyer_profile_id BIGINT REFERENCES lawyer_profiles(id) ON DELETE SET NULL,
+        description TEXT,
+        template_file_name VARCHAR(255),
+        template_mime_type VARCHAR(100),
+        template_content_base64 TEXT,
+        created_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await query(`CREATE INDEX IF NOT EXISTS idx_library_drafts_updated ON library_template_drafts (updated_at DESC)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_library_drafts_created_by ON library_template_drafts (created_by)`);
+
     await seedLibraryCatalog();
   })().catch((err) => {
     readyPromise = null;
