@@ -1,28 +1,30 @@
-# NexusLexis — Knowledge Bank Calculators API Contract
+# NexusLexis — Knowledge Bank Calculators (Full API Contract)
 
 **Document ID:** NL-FE-KB-CALC-001  
 **Backend ticket:** NL-BE-KB-CALC-001  
-**Version:** 1.0  
+**Version:** 2.0  
 **Updated:** 13 September 2026  
 **Base:** `https://nexus-lexis-backend-ql8w.vercel.app/api/v2`
 
-Replaces FE `localStorage` key `nl.kb.calculatorSchedules` with a server rate store.  
+Replaces FE `localStorage` (`nl.kb.calculatorSchedules`).  
 **Hard rule:** every write is a **snapshot replace**. PUT 11 rows → store exactly 11. No merge-by-id.
 
 ---
 
-## 0. Headers
+## 0. Common headers & errors
 
-| Header | Routes | Value |
-|--------|--------|-------|
-| `Authorization` | Admin | `Bearer <admin JWT>` |
-| `X-Client-Role` | Admin | `Admin` |
-| `Content-Type` | JSON PUT/PATCH | `application/json` |
-| `Content-Type` | PDF upload | `multipart/form-data` |
+### Headers
 
-Public GET: no auth. `Cache-Control: no-store`.
+| Header | Required on | Value |
+|--------|-------------|-------|
+| `Authorization` | All `/admin/…` | `Bearer <admin JWT>` |
+| `X-Client-Role` | All `/admin/…` | `Admin` |
+| `Content-Type` | PUT / PATCH JSON | `application/json` |
+| `Content-Type` | POST resource | `multipart/form-data` |
 
-**Error envelope**
+Public GET: **no auth**. Response header: `Cache-Control: no-store`.
+
+### Error envelope
 
 ```json
 {
@@ -35,166 +37,235 @@ Public GET: no auth. `Cache-Control: no-store`.
 
 | HTTP | When |
 |------|------|
-| 400 | Malformed body / missing file |
-| 401 | Not authenticated (admin) |
-| 403 | Not admin |
-| 404 | Unknown calculator/group, or public GET of draft |
+| 400 | Malformed JSON / missing file |
+| 401 | Missing/invalid JWT (admin) |
+| 403 | Authenticated but not admin |
+| 404 | Unknown `:id` / `:groupId`, or public GET of draft |
 | 413 | PDF > 10 MB |
 | 415 | Resource not `application/pdf` |
-| 422 | Invalid kind / missing item keys / id mismatch / empty live title |
+| 422 | Invalid kind, missing item keys, id mismatch, empty live title |
 
 ---
 
-## 1. Catalogue (8 seeded tools — not creatable via API)
+## 1. Seeded catalogue (8 tools — not creatable)
 
-| id | Title | Groups |
-|----|-------|--------|
-| `court` | Court fee | `civil` adValorem · `criminal` fixed · `documents`/`family` itemList |
-| `wht` | Property withholding | `purchase`/`sale` whtBands |
-| `stamp` | Stamp duty | `instruments`/`deeds`/`agri`/`other` infoList |
-| `tax` | Income tax (salary) | `salarySlabs` slabList |
-| `business` | Business tax | `businessSlabs` slabList + surcharge fields |
-| `inherit` | Inheritance | `note` (chrome only; engine on FE) |
-| `limit` | Limitation | `causes` limitList |
-| `secp` | SECP / FBR fees | `incorp` incorpFee · `services` serviceList |
+| `:id` | Title | Groups (`groupId` → kind) |
+|-------|-------|---------------------------|
+| `court` | Court fee | `civil`→adValorem · `criminal`→fixed · `documents`→itemList · `family`→itemList |
+| `wht` | Property withholding | `purchase`→whtBands · `sale`→whtBands |
+| `stamp` | Stamp duty | `instruments`/`deeds`/`agri`/`other`→infoList |
+| `tax` | Income tax (salary) | `salarySlabs`→slabList |
+| `business` | Business tax | `businessSlabs`→slabList |
+| `inherit` | Inheritance | `note`→note |
+| `limit` | Limitation | `causes`→limitList |
+| `secp` | SECP / FBR fees | `incorp`→incorpFee · `services`→serviceList |
 
-Unknown `:id` → **404**. Do not invent a ninth calculator from PUT.
-
----
-
-## 2. Endpoints
-
-### Public
-
-| Method | Path | Purpose |
-|--------|------|---------|
-| GET | `/knowledge-bank/calculators` | All **live** schedules |
-| GET | `/knowledge-bank/calculators/:id` | One live schedule (404 if draft/missing) |
-| GET | `/knowledge-bank/calculators/:id/resource.pdf` | Uploaded further-info PDF |
-
-### Admin
-
-| Method | Path | Purpose |
-|--------|------|---------|
-| GET | `/admin/knowledge-bank/calculators` | All eight (live + draft) |
-| GET | `/admin/knowledge-bank/calculators/:id` | One tool including draft |
-| PUT | `/admin/knowledge-bank/calculators/:id` | **Replace whole calculator snapshot** |
-| PUT | `/admin/knowledge-bank/calculators/:id/groups/:groupId` | **Replace one group** (fields + items) |
-| PATCH | `/admin/knowledge-bank/calculators/:id` | Chrome only: status/title/subtitle/hint/note |
-| POST | `/admin/knowledge-bank/calculators/:id/resource` | Upload PDF (`tax` / `business`) |
-| DELETE | `/admin/knowledge-bank/calculators/:id/resource` | Clear custom PDF |
+Unknown `:id` → **404**. Do not invent a ninth calculator.
 
 ---
 
-## 3. Response envelopes
+## 2. GET `/knowledge-bank/calculators` (public)
 
-**List**
+**Auth:** none  
+**Query params:** none
+
+**Response `200`**
 
 ```json
 {
   "success": true,
   "data": {
-    "schedules": [ /* … */ ],
+    "schedules": [
+      {
+        "id": "court",
+        "title": "Court fee",
+        "subtitle": "Civil, criminal & document court fees",
+        "status": "live",
+        "hint": "Ad-valorem civil fees apply above the exemption threshold.",
+        "note": null,
+        "resource": null,
+        "groups": [
+          {
+            "id": "civil",
+            "title": "Civil (ad-valorem)",
+            "kind": "adValorem",
+            "hint": null,
+            "fields": { "exemptUpto": 25000, "ratePercent": 7.5, "maxFee": 15000 },
+            "items": []
+          }
+        ],
+        "updatedAt": "2026-09-13T12:00:00.000Z",
+        "updatedBy": null
+      }
+    ],
     "counts": { "live": 8, "draft": 0 }
   }
 }
 ```
 
-**One calculator**
-
-```json
-{ "success": true, "data": { /* schedule object */ } }
-```
+Only `status: "live"` tools. Drafts omitted.
 
 ---
 
-## 4. Schedule object (GET / PUT body)
+## 3. GET `/knowledge-bank/calculators/:id` (public)
+
+**Auth:** none
+
+**Path params**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `id` | string | Yes | One of the eight seeds |
+
+**Response `200`:** `{ "success": true, "data": { /* one schedule */ } }`  
+**Errors:** `404` if unknown id or tool is `draft`
+
+---
+
+## 4. GET `/knowledge-bank/calculators/:id/resource.pdf` (public)
+
+**Auth:** none  
+**Path:** `id` = `tax` or `business` (with uploaded PDF)
+
+**Response `200`:** raw PDF bytes  
+**Headers:** `Content-Type: application/pdf`, `Content-Disposition: inline; filename="…"`  
+**Errors:** `404` if no uploaded file
+
+---
+
+## 5. GET `/admin/knowledge-bank/calculators`
+
+**Auth:** Admin JWT + `X-Client-Role: Admin`  
+**Query params:** none
+
+**Response `200`** — same envelope as public list, but includes **draft + live** (all 8).
 
 ```json
 {
-  "id": "limit",
-  "title": "Limitation",
-  "subtitle": "Filing deadlines under 1908 Act",
-  "status": "live",
-  "hint": "Quick reference…",
-  "note": null,
-  "resource": null,
-  "groups": [
-    {
-      "id": "causes",
-      "title": "Articles & Limitation Periods",
-      "kind": "limitList",
-      "hint": null,
-      "fields": {},
-      "items": [
-        {
-          "id": "art-2",
-          "category": "TORT",
-          "art": "Art. 2",
-          "label": "For compensation for injury",
-          "period": "1 year",
-          "years": 1,
-          "months": 0,
-          "days": 0,
-          "startFrom": "Date of injury"
-        }
-      ]
-    }
-  ],
-  "updatedAt": "2026-09-12T10:00:00.000Z",
-  "updatedBy": "1"
+  "success": true,
+  "data": {
+    "schedules": [ /* 8 tools */ ],
+    "counts": { "live": 7, "draft": 1 }
+  }
 }
 ```
 
-| Field | Rules |
-|-------|-------|
-| `id` | Must match URL `:id` |
-| `status` | `live` \| `draft` — public hides draft |
-| `groups` | Full array replace; order = display order |
-| `groups[].kind` | Must match seed; change → 422 |
-| `groups[].fields` | Object replace (not deep-merge) |
-| `groups[].items` | Snapshot list — 10→11 stores 11 |
+---
+
+## 6. GET `/admin/knowledge-bank/calculators/:id`
+
+**Auth:** Admin  
+**Path:** `id` — calculator id (includes draft)
+
+**Response `200`:** `{ "success": true, "data": { /* full schedule */ } }`  
+**Errors:** `404`
 
 ---
 
-## 5. PUT whole calculator
+## 7. PUT `/admin/knowledge-bank/calculators/:id`
 
-`PUT /api/v2/admin/knowledge-bank/calculators/court`
+Replace the **entire** calculator snapshot. Must include **all seeded groups**.
 
-Must include **all seeded groups** for that tool. Atomic validate-then-swap.
+**Auth:** Admin  
+**Headers:** `Content-Type: application/json`
+
+**Path params:** `id` — must match `body.id`
+
+**Request body**
 
 ```json
 {
   "id": "court",
   "title": "Court fee",
+  "subtitle": "Civil, criminal & document court fees",
   "status": "live",
+  "hint": "Ad-valorem civil fees apply above the exemption threshold.",
+  "note": null,
+  "resource": null,
   "groups": [
     {
       "id": "civil",
+      "title": "Civil (ad-valorem)",
       "kind": "adValorem",
+      "hint": null,
       "fields": { "exemptUpto": 25000, "ratePercent": 7.5, "maxFee": 15000 },
       "items": []
     },
-    { "id": "criminal", "kind": "fixed", "fields": { "fee": 0 }, "items": [] },
+    {
+      "id": "criminal",
+      "title": "Criminal (fixed)",
+      "kind": "fixed",
+      "fields": { "fee": 0 },
+      "items": []
+    },
     {
       "id": "documents",
+      "title": "Documents",
       "kind": "itemList",
       "itemFeeKey": "fee",
       "fields": {},
-      "items": [{ "id": "civilVakalatnama", "label": "Civil Vakalatnama", "fee": 100 }]
+      "items": [
+        { "id": "civilVakalatnama", "label": "Civil Vakalatnama", "fee": 100 }
+      ]
     },
-    { "id": "family", "kind": "itemList", "itemFeeKey": "fee", "fields": {}, "items": [] }
+    {
+      "id": "family",
+      "title": "Family",
+      "kind": "itemList",
+      "itemFeeKey": "fee",
+      "fields": {},
+      "items": []
+    }
   ]
 }
 ```
 
-**Response `200`:** `{ "success": true, "data": { /* full schedule */ } }`
+| Field | Type | Required | Rules |
+|-------|------|----------|-------|
+| `id` | string | Yes | Must equal URL `:id` |
+| `title` | string | Yes if `live` | Empty live title → 422 |
+| `subtitle` | string\|null | No | |
+| `status` | `live`\|`draft` | Yes | |
+| `hint` | string\|null | No | |
+| `note` | string\|null | No | Stamp warning; others usually null |
+| `resource` | object\|null | No | `{ heading, fileName, url }` chrome only; file via POST resource |
+| `groups` | array | Yes | Full snapshot; all seeded group ids required |
+
+**Response `200`**
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": "court",
+    "title": "Court fee",
+    "status": "live",
+    "groups": [ /* stored snapshot */ ],
+    "updatedAt": "2026-09-13T12:05:00.000Z",
+    "updatedBy": "1"
+  }
+}
+```
+
+**Errors:** `404` unknown id · `422` validation · missing group · kind mismatch
 
 ---
 
-## 6. PUT one group (table save)
+## 8. PUT `/admin/knowledge-bank/calculators/:id/groups/:groupId`
 
-`PUT /api/v2/admin/knowledge-bank/calculators/limit/groups/causes`
+Replace **one group** only (typical table Save). Rest of calculator untouched.
+
+**Auth:** Admin  
+**Headers:** `Content-Type: application/json`
+
+**Path params**
+
+| Name | Example |
+|------|---------|
+| `id` | `limit` |
+| `groupId` | `causes` |
+
+**Request body**
 
 ```json
 {
@@ -202,104 +273,193 @@ Must include **all seeded groups** for that tool. Atomic validate-then-swap.
   "kind": "limitList",
   "hint": null,
   "fields": {},
-  "items": [ /* FULL list — 11 objects replaces 10 */ ]
+  "items": [
+    {
+      "id": "art-2",
+      "category": "TORT",
+      "art": "Art. 2",
+      "label": "For compensation for injury",
+      "period": "1 year",
+      "years": 1,
+      "months": 0,
+      "days": 0,
+      "startFrom": "Date of injury",
+      "notes": ""
+    }
+  ]
 }
 ```
 
-- `kind` must match seeded kind.
-- `items: []` on a list kind stores an empty public table (allowed).
-- Response = **full calculator** after replace.
+| Field | Type | Required | Rules |
+|-------|------|----------|-------|
+| `kind` | string | Yes | Must match seeded kind for this group |
+| `title` | string | No | |
+| `hint` | string\|null | No | |
+| `fields` | object | Depends on kind | Replace object — no deep-merge |
+| `items` | array | List kinds | **Full list**. 10→11 stores 11. `[]` allowed (empty public table) |
+
+**WHT band example** (`up: 0` = open-ended):
+
+```json
+{ "id": "p100plus", "label": "Above 100M", "from": 100000000, "up": 0, "filer": 1.25, "non": 18.5 }
+```
+
+**Business surcharge** lives on group `fields`, not each row:
+
+```json
+{
+  "id": "businessSlabs",
+  "kind": "slabList",
+  "fields": { "surchargeFrom": 10000000, "surchargePercent": 10 },
+  "items": [
+    { "id": "by1", "label": "Nil band", "from": 0, "up": 600000, "ratePercent": 0, "base": 0 }
+  ]
+}
+```
+
+**Response `200`:** full calculator after replace — `{ "success": true, "data": { /* schedule */ } }`  
+**Errors:** `404` unknown calculator/group · `422` kind/item validation
 
 ---
 
-## 7. PATCH chrome only
+## 9. PATCH `/admin/knowledge-bank/calculators/:id`
 
-`PATCH /api/v2/admin/knowledge-bank/calculators/stamp`
+Chrome only. Arrays / `groups` / `items` **ignored**.
+
+**Auth:** Admin  
+**Headers:** `Content-Type: application/json`
+
+**Request body** (any subset)
 
 ```json
 {
   "status": "draft",
-  "hint": "Hold public card until rates are notified."
+  "title": "Stamp duty",
+  "subtitle": "…",
+  "hint": "Hold public card until Punjab notifies 2026-27 rates.",
+  "note": "Confirm e-stamp before relying on these rates."
 }
 ```
 
-Allowed keys: `status`, `title`, `subtitle`, `hint`, `note`.  
-Arrays/`groups`/`items` ignored — never replace tables via PATCH.
+| Field | Type | Allowed |
+|-------|------|---------|
+| `status` | string | `live` \| `draft` |
+| `title` | string | Required non-empty if setting `live` |
+| `subtitle` | string\|null | |
+| `hint` | string\|null | |
+| `note` | string\|null | |
+
+**Response `200`:** `{ "success": true, "data": { /* schedule */ } }`
 
 ---
 
-## 8. Resource PDF (tax & business)
+## 10. POST `/admin/knowledge-bank/calculators/:id/resource`
 
-**Upload**
+Upload further-information PDF. Only **`tax`** and **`business`**.
 
-```
-POST /api/v2/admin/knowledge-bank/calculators/tax/resource
-Content-Type: multipart/form-data
+**Auth:** Admin  
+**Headers:** `Content-Type: multipart/form-data`
 
-heading=For further information
-fileName=WithholdingTaxRatesCard2027.pdf
-file=<pdf bytes>
-```
+**Path:** `id` = `tax` \| `business`
 
-**Response includes**
+**Form fields**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `file` | File | **Yes** | PDF bytes, max 10 MB |
+| `heading` | string | No | Default `For further information` |
+| `fileName` | string | No | Display name |
+
+**Response `200`**
 
 ```json
-"resource": {
-  "heading": "For further information",
-  "fileName": "WithholdingTaxRatesCard2027.pdf",
-  "url": "https://…/api/v2/knowledge-bank/calculators/tax/resource.pdf"
+{
+  "success": true,
+  "data": {
+    "id": "tax",
+    "resource": {
+      "heading": "For further information",
+      "fileName": "WithholdingTaxRatesCard2027.pdf",
+      "url": "https://nexus-lexis-backend-ql8w.vercel.app/api/v2/knowledge-bank/calculators/tax/resource.pdf"
+    },
+    "updatedAt": "…",
+    "updatedBy": "1"
+  }
 }
 ```
 
-**DELETE** `/admin/knowledge-bank/calculators/:id/resource` → clears file; `url` becomes `""` so FE falls back to bundled card.
+**Errors:** `400` missing file · `413` too large · `415` not PDF · `422` wrong calculator id
 
 ---
 
-## 9. Group kinds → item shapes
+## 11. DELETE `/admin/knowledge-bank/calculators/:id/resource`
 
-| kind | fields | each item |
-|------|--------|-----------|
-| `adValorem` | exemptUpto, ratePercent, maxFee | — |
-| `fixed` | fee | — |
-| `itemList` | — | id, label, fee |
-| `whtBands` | — | id, label, from, up, filer, non (`up=0` = no cap) |
-| `infoList` | — | id, article, label, rate (text) |
-| `slabList` | optional surchargeFrom, surchargePercent | id, label, from, up, ratePercent, base |
-| `limitList` | — | id, category, art, label, period, years, months, days, startFrom, notes? |
-| `incorpFee` | lotSize, firstOnline, firstOffline, extraOnline, extraOffline | — |
-| `serviceList` | — | id, label, govt · optional `calc: "incorp"` |
+**Auth:** Admin · no body
+
+Clears stored PDF. `resource.url` becomes `""` so FE falls back to bundled card.
+
+**Response `200`:** `{ "success": true, "data": { /* schedule with resource.url "" */ } }`
+
+---
+
+## 12. Schedule object field reference
+
+| Field | Type | Rules |
+|-------|------|-------|
+| `id` | string | One of eight seeds |
+| `title` | string | Admin + public chrome |
+| `subtitle` | string\|null | |
+| `status` | `live`\|`draft` | Public hides draft |
+| `hint` | string\|null | |
+| `note` | string\|null | |
+| `resource` | object\|null | `{ heading, fileName, url }` |
+| `groups` | array | Display order = array order |
+| `groups[].id` | string | Stable per tool |
+| `groups[].kind` | enum | Seeded; change → 422 |
+| `groups[].fields` | object | Snapshot replace |
+| `groups[].items` | array | Snapshot replace |
+| `groups[].itemFeeKey` | string | Optional; court itemList uses `"fee"` |
+| `updatedAt` | ISO string | Set on every successful write |
+| `updatedBy` | string\|null | Admin user id |
+
+---
+
+## 13. Group kinds → required shapes
+
+| kind | `fields` required | each `items[]` required |
+|------|-------------------|-------------------------|
+| `adValorem` | `exemptUpto`, `ratePercent`, `maxFee` | — (no items) |
+| `fixed` | `fee` | — |
+| `percent` | `ratePercent` | — |
+| `filerRates` | `filer`, `non` | — |
 | `note` | — | — |
+| `itemList` | — | `id`, `label`, `fee` |
+| `whtBands` | — | `id`, `label`, `from`, `up`, `filer`, `non` |
+| `infoList` | — | `id`, `article`, `label`, `rate` (text) |
+| `slabList` | optional `surchargeFrom`, `surchargePercent` | `id`, `label`, `from`, `up`, `ratePercent`, `base` |
+| `limitList` | — | `id`, `category`, `art`, `label`, `period`, `years`, `months`, `days`, `startFrom` (+ optional `notes`) |
+| `incorpFee` | `lotSize`, `firstOnline`, `firstOffline`, `extraOnline`, `extraOffline` | — |
+| `serviceList` | — | `id`, `label`, `govt` (+ optional `calc: "incorp"`) |
+
+Extra keys on items may be stored. Missing required keys → **422**.
 
 ---
 
-## 10. FE swap
+## 14. FE swap
 
 | Current (localStorage) | API |
 |------------------------|-----|
 | `loadCalculatorSchedules()` admin | `GET /admin/knowledge-bank/calculators` |
 | `loadCalculatorSchedules()` public | `GET /knowledge-bank/calculators` |
-| `persistCalculatorSchedules` / Save | `PUT …/calculators/:id` or `PUT …/groups/:groupId` |
-| add/remove row then Save | same PUT — body.items is the new full list |
-| `resolveSalaryTaxPdf` | use `resource.url` when https / absolute |
+| Save active tool | `PUT /admin/…/calculators/:id` |
+| Save one table | `PUT /admin/…/calculators/:id/groups/:groupId` |
+| Toggle draft | `PATCH …/:id` `{ "status": "draft" }` |
+| PDF card | `resource.url` from GET when non-empty |
 
 If public GET fails, FE may fall back to `DEFAULT_CALCULATOR_SCHEDULES`.
 
-**Not in MVP:** server-side fee computation, optimistic lock (P2), `POST …/:id/reset`.
+**Not in MVP:** server-side fee math, optimistic lock, `POST …/:id/reset`.
 
 ---
 
-## 11. Delivery status
-
-| Priority | Item | Status |
-|----------|------|--------|
-| P0 | Seed eight calculators | **Shipped** |
-| P0 | Public + admin GET list/detail | **Shipped** |
-| P0 | PUT full snapshot replace | **Shipped** |
-| P0 | PUT group snapshot replace | **Shipped** |
-| P1 | PATCH status/chrome | **Shipped** |
-| P1 | POST/DELETE resource PDF | **Shipped** |
-| P2 | Optimistic lock + audit | Deferred |
-
----
-
-*NL-FE-KB-CALC-001 · Full request/response contract for frontend*
+*NL-FE-KB-CALC-001 v2.0 — Full request/response contract for frontend*
