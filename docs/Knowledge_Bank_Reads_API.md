@@ -1,8 +1,8 @@
-# NexusLexis — Knowledge Bank Reads API Contract
+# NexusLexis — Knowledge Bank Reads (Full API Contract)
 
 **Document ID:** NL-FE-KB-READS-001  
 **Backend ticket:** NL-BE-KB-READS-001  
-**Version:** 1.0  
+**Version:** 2.0  
 **Updated:** 13 September 2026  
 **Base:** `https://nexus-lexis-backend-ql8w.vercel.app/api/v2`
 
@@ -12,18 +12,22 @@ Card is JSON. Body is one PDF. Admin publishes → public `/knowledge` sections 
 
 ---
 
-## 0. Headers
+## 0. Common headers & errors
 
-| Header | Routes | Value |
-|--------|--------|-------|
-| `Authorization` | Admin | `Bearer <JWT>` |
-| `X-Client-Role` | Admin | `Admin` |
-| `Content-Type` | Create / file | `multipart/form-data` |
-| `Content-Type` | PATCH | `application/json` |
+### Headers
 
-Public GET + public PDF: **no auth**. PDF responses send `Content-Type: application/pdf`, CORS `*`, `Cache-Control: public, max-age=300`.
+| Header | Required on | Value |
+|--------|-------------|-------|
+| `Authorization` | All `/admin/…` | `Bearer <admin JWT>` |
+| `X-Client-Role` | All `/admin/…` | `Admin` |
+| `Content-Type` | PATCH JSON | `application/json` |
+| `Content-Type` | POST create / POST file | `multipart/form-data` |
 
-**Error shape**
+Public GET + public PDF: **no auth**.  
+JSON list/detail responses: `Cache-Control: no-store`.  
+Public PDF: `Content-Type: application/pdf`, CORS `*`, `Cache-Control: public, max-age=300`.
+
+### Error envelope
 
 ```json
 {
@@ -36,59 +40,28 @@ Public GET + public PDF: **no auth**. PDF responses send `Content-Type: applicat
 
 | HTTP | When |
 |------|------|
-| 400 | Malformed / missing multipart |
-| 401 / 403 | Admin auth |
-| 404 | Unknown id/slug, or public GET of draft/retired |
-| 409 | Slug taken; published slug/pillar change |
+| 400 | Malformed / missing multipart file |
+| 401 | Missing/invalid JWT (admin) |
+| 403 | Authenticated but not admin |
+| 404 | Unknown id/slug, or public GET of draft/retired / missing PDF |
+| 409 | Slug taken; published slug/pillar change locked |
 | 413 | PDF > 15 MB |
-| 415 | Not PDF |
-| 422 | Publish without PDF; missing extras; second featured; stack full; bad enum |
+| 415 | Not `application/pdf` |
+| 422 | Publish without PDF; missing extras; featured taken; stack full; bad enum |
 
 ---
 
-## 1. Pillars
+## 1. Pillars & shared entry object
 
 | pillar | Landing | Layout |
 |--------|---------|--------|
-| `articles` | #articles | featured + stack[0–2] + mini[] |
+| `articles` | #articles | `featured` + `stack[0–2]` + `mini[]` |
 | `summaries` | #summaries | filters + statute grid |
 | `judgements` | #judgements | 2-col digest cards |
 
 Statuses: `published` \| `draft` \| `retired`. Public never returns draft/retired.
 
----
-
-## 2. Endpoints
-
-### Public
-
-| Method | Path |
-|--------|------|
-| GET | `/knowledge-bank/articles` |
-| GET | `/knowledge-bank/summaries` |
-| GET | `/knowledge-bank/judgements` |
-| GET | `/knowledge-bank/articles/:slug` |
-| GET | `/knowledge-bank/summaries/:slug` |
-| GET | `/knowledge-bank/judgements/:slug` |
-| GET/HEAD | `/knowledge-bank/{pillar}/{slug}/file` (?download=1 → attachment) |
-| GET | `/knowledge-bank/reads?pillar=articles\|summaries\|judgements` *(optional)* |
-
-### Admin
-
-| Method | Path |
-|--------|------|
-| GET | `/admin/knowledge-bank/entries` |
-| GET | `/admin/knowledge-bank/entries/:id` |
-| POST | `/admin/knowledge-bank/entries` |
-| PATCH | `/admin/knowledge-bank/entries/:id` |
-| PATCH | `/admin/knowledge-bank/entries/:id/status` |
-| POST | `/admin/knowledge-bank/entries/:id/file` |
-| DELETE | `/admin/knowledge-bank/entries/:id/file` |
-| GET | `/admin/knowledge-bank/entries/:id/file` |
-
----
-
-## 3. Shared entry object
+### Full entry shape (admin + public detail)
 
 ```json
 {
@@ -105,44 +78,84 @@ Statuses: `published` \| `draft` \| `retired`. Public never returns draft/retire
   "schema": true,
   "related": ["drafting", "consultation"],
   "displayOrder": 20,
+  "hasFile": true,
   "file": {
-    "url": "https://…/knowledge-bank/articles/cheque-bounce-section-489f/file?v=…",
+    "url": "https://…/api/v2/knowledge-bank/articles/cheque-bounce-section-489f/file?v=1726000000000",
     "fileName": "cheque-bounce-section-489f.pdf",
     "mime": "application/pdf",
     "sizeBytes": 482113
   },
-  "createdAt": "…",
-  "updatedAt": "…",
-  "updatedBy": "1"
+  "createdAt": "2026-09-13T10:00:00.000Z",
+  "updatedAt": "2026-09-13T12:00:00.000Z",
+  "updatedBy": "1",
+  "placement": "stack",
+  "kicker": "Criminal Law",
+  "band": "seal",
+  "author": null,
+  "credit": null,
+  "readMins": 5
 }
 ```
 
-**Publish rule:** `status=published` without PDF → **422**. Retire keeps file. DELETE file → forces `draft`.
+**Pillar extras**
+
+| Pillar | Extra fields |
+|--------|--------------|
+| `articles` | `placement` (`featured`\|`stack`\|`mini`), `kicker`, `band` (`seal`\|`gold`\|`navy`), `author`, `credit`, `readMins` |
+| `summaries` | `tag` (`Constitutional`\|`Criminal`\|`Civil`\|`Family`\|`Property`\|`Tax`), `chapters`, `amended` |
+| `judgements` | `court`, `cite`, `holding`, `spine` (`sc`\|`hc`\|`lhc`), `tags[]` (max 6), `readMins` |
+
+**related** values allowed: `drafting` \| `consultation` \| `vlo`.
+
+**Publish rules**
+- `status=published` without PDF → **422** `{ fields.file: "required" }`
+- Published articles need `placement`
+- Published summaries need valid `tag`
+- Published judgements need `cite`
+- Only one published `featured`; at most two published `stack` → else **422**
+- DELETE file → forces `status=draft`. Retire keeps file.
 
 ---
 
-## 4. Public landing responses
+## 2. GET `/knowledge-bank/articles` (public)
 
-### GET `/knowledge-bank/articles`
+**Auth:** none  
+**Headers:** none required  
+**Query params**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `search` | string | No | Filters title / excerpt / keyword (ILIKE) |
+
+**Response `200`**
 
 ```json
 {
   "success": true,
   "data": {
-    "featured": { /* one or null */ },
+    "featured": { /* one entry or null */ },
     "stack": [ /* 0–2 */ ],
     "mini": [ /* rest */ ],
-    "items": [ /* all, for search */ ],
+    "items": [ /* all published, for client search */ ],
     "counts": { "published": 6 }
   }
 }
 ```
 
-Article extras: `placement` (`featured`\|`stack`\|`mini`), `kicker`, `band` (`seal`\|`gold`\|`navy`), `author`, `credit`, `readMins`.
+Empty published set → **200** with `featured: null`, empty arrays (never 404 a list).
 
-**Uniqueness (reject):** only one published `featured`; at most two published `stack`. Second write → 422 (admin chooses).
+---
 
-### GET `/knowledge-bank/summaries`
+## 3. GET `/knowledge-bank/summaries` (public)
+
+**Auth:** none  
+**Query params**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `tag` | string | No | One of `Constitutional`…`Tax`, or omit / `All` |
+
+**Response `200`**
 
 ```json
 {
@@ -155,9 +168,16 @@ Article extras: `placement` (`featured`\|`stack`\|`mini`), `kicker`, `band` (`se
 }
 ```
 
-Extras: `tag` (required on publish), `chapters`, `amended`. Query `?tag=Criminal` optional.
+**Errors:** `422` if `tag` is not in the allowed set (and not `All`).
 
-### GET `/knowledge-bank/judgements`
+---
+
+## 4. GET `/knowledge-bank/judgements` (public)
+
+**Auth:** none  
+**Query params:** none
+
+**Response `200`**
 
 ```json
 {
@@ -169,50 +189,206 @@ Extras: `tag` (required on publish), `chapters`, `amended`. Query `?tag=Criminal
 }
 ```
 
-Extras: `court`, `cite` (required on publish), `holding`, `spine` (`sc`\|`hc`\|`lhc`), `tags[]`, `readMins`.
+---
 
-Empty published lists → **200** with empty arrays / `featured: null` (never 404 a list).
+## 5. GET `/knowledge-bank/reads` (public, optional alias)
+
+**Auth:** none  
+**Query params**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `pillar` | string | Yes | `articles` \| `summaries` \| `judgements` |
+| `tag` | string | No | Only when `pillar=summaries` |
+
+**Response `200`:** same envelope as the matching pillar landing.  
+**Errors:** `422` if `pillar` missing/invalid.
 
 ---
 
-## 5. Admin ledger
+## 6. GET `/knowledge-bank/{pillar}/:slug` (public)
 
-`GET /admin/knowledge-bank/entries?pillar=&status=&search=&page=&limit=`
+**Auth:** none  
 
-`limit` ∈ {12, 24, 48}, default 12.
+**Path params**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `pillar` | string | Yes | `articles` \| `summaries` \| `judgements` |
+| `slug` | string | Yes | Published slug |
+
+**Response `200`**
+
+```json
+{
+  "success": true,
+  "data": { /* full entry including file.url */ }
+}
+```
+
+**Errors:** `404` if unknown, draft, or retired.
+
+---
+
+## 7. GET / HEAD `/knowledge-bank/{pillar}/:slug/file` (public PDF)
+
+**Auth:** none  
+
+**Path params:** `pillar`, `slug` (published only)
+
+**Query params**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `download` | `"1"` | No | If `1` → `Content-Disposition: attachment`; else `inline` |
+| `v` | number | No | Cache-buster from `file.url` (`updatedAt` ms) — ignored by server |
+
+**Response `200`:** raw PDF bytes  
+
+**Response headers**
+
+| Header | Value |
+|--------|-------|
+| `Content-Type` | `application/pdf` |
+| `Content-Disposition` | `inline; filename="…"` or `attachment; …` |
+| `Cache-Control` | `public, max-age=300` |
+| `Access-Control-Allow-Origin` | `*` |
+| `Access-Control-Allow-Methods` | `GET, HEAD, OPTIONS` |
+| `Cross-Origin-Resource-Policy` | `cross-origin` |
+
+**OPTIONS** same path → `204` with CORS headers.
+
+**HEAD** → `200` with `Content-Length`, no body.
+
+**Errors:** `404` if draft/retired or no PDF.
+
+**FE:** `file.url` → pdf.js `getDocument({ url })`.
+
+---
+
+## 8. GET `/admin/knowledge-bank/entries`
+
+**Auth:** Admin JWT + `X-Client-Role: Admin`  
+**Headers:** `Authorization`, `X-Client-Role`
+
+**Query params**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `pillar` | string | No | `articles` \| `summaries` \| `judgements` |
+| `status` | string | No | `published` \| `draft` \| `retired` |
+| `search` | string | No | title / slug / keyword / category / cite / court |
+| `page` | number | No | Default `1` |
+| `limit` | number | No | `12` \| `24` \| `48` (nearest snap). Default `12` |
+
+**Response `200`**
 
 ```json
 {
   "success": true,
   "data": {
-    "items": [ /* compact rows */ ],
-    "pagination": { "page": 1, "limit": 12, "totalItems": 18, "totalPages": 2, "hasNext": true, "hasPrev": false },
+    "items": [
+      {
+        "id": "12",
+        "pillar": "articles",
+        "slug": "cheque-bounce-section-489f",
+        "title": "Cheque bounce under Section 489-F",
+        "category": "Criminal Law",
+        "keyword": "cheque bounce pakistan",
+        "status": "published",
+        "updatedAt": "…",
+        "hasFile": true,
+        "displayOrder": 20,
+        "placement": "stack"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 12,
+      "totalItems": 18,
+      "totalPages": 2,
+      "hasNext": true,
+      "hasPrev": false
+    },
     "counts": {
-      "articles": 8, "summaries": 9, "judgements": 6,
-      "published": 19, "draft": 3, "retired": 1
+      "articles": 8,
+      "summaries": 9,
+      "judgements": 6,
+      "published": 19,
+      "draft": 3,
+      "retired": 1
     }
   }
 }
 ```
 
-`counts` are **global** (KPI tiles do not shrink when filters are on).
+`counts` are **global** KPI tiles (do not shrink when filters are on).  
+Admin list rows are **compact** (summaries may show `tag`; judgements `cite`).
 
 ---
 
-## 6. Create / update
+## 9. GET `/admin/knowledge-bank/entries/:id`
 
-### POST `/admin/knowledge-bank/entries` (multipart)
+**Auth:** Admin  
+
+**Path params**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `id` | string/number | Yes | Entry id |
+
+**Response `200`:** `{ "success": true, "data": { /* full entry */ } }`  
+**Errors:** `404`
+
+---
+
+## 10. POST `/admin/knowledge-bank/entries` (create)
+
+**Auth:** Admin  
+**Headers:** `Content-Type: multipart/form-data`
+
+**Body fields (form)**
+
+| Field | Type | Required | Rules |
+|-------|------|----------|-------|
+| `pillar` | string | Yes | `articles` \| `summaries` \| `judgements` |
+| `title` | string | Yes | Max 140 |
+| `slug` | string | No | 4–72 kebab; default from title |
+| `status` | string | No | Default `draft` |
+| `excerpt` or `body` | string | No | Max 400 (admin “body” → excerpt) |
+| `category` | string | No | |
+| `keyword` | string | No | |
+| `metaTitle` | string | No | |
+| `metaDesc` | string | No | |
+| `schema` | bool | No | `true`/`1`/`yes` |
+| `related` | csv or multi | No | `drafting,consultation,vlo` |
+| `displayOrder` | number | No | Default `0` |
+| `placement` | string | If published article | `featured`\|`stack`\|`mini` |
+| `kicker` | string | No | articles |
+| `band` | string | No | `seal`\|`gold`\|`navy` |
+| `author` | string | No | articles |
+| `credit` | string | No | articles |
+| `readMins` | number | No | 1–60 |
+| `tag` | string | If published summary | Allowed summary tags |
+| `chapters` | string | No | summaries |
+| `amended` | string | No | summaries |
+| `court` | string | No | judgements |
+| `cite` | string | If published judgement | |
+| `holding` | string | No | judgements |
+| `spine` | string | No | `sc`\|`hc`\|`lhc` |
+| `tags` | csv | No | judgements, max 6 |
+| `file` | file | If published | Field name **must** be `file`. Max 15 MB PDF |
+
+**Example (articles draft)**
 
 ```
 pillar=articles
-title=…
+title=Cheque bounce under Section 489-F
 slug=cheque-bounce-section-489f
 status=draft
-excerpt=…          # admin "body" field → excerpt
+excerpt=Criminal complaint, civil recovery, or both…
 category=Criminal Law
-keyword=…
-metaTitle=…
-metaDesc=…
+keyword=cheque bounce pakistan
 schema=true
 related=drafting,consultation
 displayOrder=20
@@ -220,49 +396,141 @@ placement=stack
 kicker=Criminal Law
 band=seal
 readMins=5
-file=<pdf>         # optional on draft; required if published
+file=<optional pdf>
 ```
 
-Summaries also: `tag`, `chapters`, `amended`.  
-Judgements also: `court`, `cite`, `holding`, `spine`, `tags`.
+**Response `201`**
 
-**Response `201`:** `{ "success": true, "data": { /* full entry */ } }`
+```json
+{
+  "success": true,
+  "data": { /* full entry */ }
+}
+```
 
-### PATCH `/admin/knowledge-bank/entries/:id` (JSON)
+**Errors:** `400` missing file when required · `409` slug taken · `413` · `415` · `422` validation / placement rules
 
-Metadata only — PDF untouched. Unknown keys ignored.  
-Pillar/slug change blocked after publish → **409**.
+---
 
-### PATCH `/admin/knowledge-bank/entries/:id/status`
+## 11. PATCH `/admin/knowledge-bank/entries/:id`
+
+Metadata only — PDF untouched. Unknown keys ignored.
+
+**Auth:** Admin  
+**Headers:** `Content-Type: application/json`
+
+**Path params:** `id`
+
+**Request body** (partial JSON — any subset of create fields except `file`)
+
+```json
+{
+  "title": "Cheque bounce under Section 489-F (updated)",
+  "excerpt": "…",
+  "status": "published",
+  "placement": "featured",
+  "band": "gold",
+  "readMins": 6,
+  "metaTitle": "…",
+  "metaDesc": "…"
+}
+```
+
+| Rule | Behaviour |
+|------|-----------|
+| Pillar change | Allowed only while `draft`; published → **409** `{ pillar: "locked" }` |
+| Slug change | Allowed only while not published; published → **409** `{ slug: "locked" }` |
+| Publish | Same publish extras + PDF required as create |
+
+**Response `200`:** `{ "success": true, "data": { /* full entry */ } }`  
+**Errors:** `404` · `409` · `422`
+
+---
+
+## 12. PATCH `/admin/knowledge-bank/entries/:id/status`
+
+**Auth:** Admin  
+**Headers:** `Content-Type: application/json`
+
+**Request body**
 
 ```json
 { "status": "retired" }
 ```
 
-### POST `/admin/knowledge-bank/entries/:id/file`
+| Field | Type | Required | Rules |
+|-------|------|----------|-------|
+| `status` | string | Yes | `published` \| `draft` \| `retired` |
 
-Field name **must** be `file`. Optional `fileName`. Max 15 MB. Replace atomic.
+Publishing via this route still requires existing PDF + pillar extras (same as PATCH metadata).
 
-### DELETE `…/file`
+**Response `200`:** `{ "success": true, "data": { /* full entry */ } }`  
+**Errors:** `404` · `422`
+
+---
+
+## 13. POST `/admin/knowledge-bank/entries/:id/file`
+
+Replace PDF atomically.
+
+**Auth:** Admin  
+**Headers:** `Content-Type: multipart/form-data`
+
+**Path params:** `id`
+
+**Body**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `file` | file | Yes | PDF, max 15 MB. Field name **must** be `file` |
+| `fileName` | string | No | Display name override |
+
+**Response `200`**
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": "12",
+    "hasFile": true,
+    "file": {
+      "url": "https://…/file?v=…",
+      "fileName": "cheque-bounce-section-489f.pdf",
+      "mime": "application/pdf",
+      "sizeBytes": 482113
+    }
+  }
+}
+```
+
+**Errors:** `400` missing file · `404` · `413` · `415`
+
+---
+
+## 14. DELETE `/admin/knowledge-bank/entries/:id/file`
+
+**Auth:** Admin  
+**Body:** none
 
 Clears PDF and forces `status=draft`.
 
----
-
-## 7. PDF popup
-
-Public `file.url` → pdf.js `getDocument({ url })`.
-
-- No auth on public file
-- Draft/retired → 404
-- `Content-Type: application/pdf`
-- `Content-Disposition: inline` (or `attachment` if `?download=1`)
-- CORS allow GET/HEAD/OPTIONS
-- URL includes `?v=<updatedAt>` cache-buster after replace
+**Response `200`:** `{ "success": true, "data": { /* entry with file: null, status: "draft" */ } }`  
+**Errors:** `404`
 
 ---
 
-## 8. FE swap
+## 15. GET `/admin/knowledge-bank/entries/:id/file`
+
+**Auth:** Admin  
+
+**Query:** `download=1` optional (same as public)
+
+**Response `200`:** raw PDF bytes (CORS headers set; admin may preview drafts).  
+**Errors:** `404` if no file.
+
+---
+
+## 16. FE swap
 
 | Current | Replace with |
 |---------|--------------|
@@ -276,7 +544,7 @@ Until first successful GET with items, FE may keep fixtures.
 
 ---
 
-## 9. Delivery status
+## 17. Delivery status
 
 | P | Item | Status |
 |---|------|--------|
@@ -290,4 +558,4 @@ Until first successful GET with items, FE may keep fixtures.
 
 ---
 
-*NL-FE-KB-READS-001 · Full request/response contract for frontend*
+*NL-FE-KB-READS-001 · v2.0 Full request/response contract for frontend*
