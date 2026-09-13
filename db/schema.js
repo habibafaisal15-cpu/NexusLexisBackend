@@ -7,6 +7,7 @@ import { ensureAppointmentsSchema } from './ensureAppointmentsSchema.js';
 import { ensureLexSchema } from './ensureLexSchema.js';
 import { ensureAdminPortalSchema } from './ensureAdminPortalSchema.js';
 import { ensureCalculatorSchema } from './ensureCalculatorSchema.js';
+import { ensureKnowledgeReadsSchema } from './ensureKnowledgeReadsSchema.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -43,4 +44,5 @@ export async function runSchema() {
   await ensureLexSchema();
   await ensureAdminPortalSchema();
   await ensureCalculatorSchema();
+  await ensureKnowledgeReadsSchema();
 }
