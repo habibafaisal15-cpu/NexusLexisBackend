@@ -20,6 +20,11 @@ import { ensureAppointmentsSchema } from './db/ensureAppointmentsSchema.js';
 import { ensureLexSchema } from './db/ensureLexSchema.js';
 import { ensureAdminPortalSchema } from './db/ensureAdminPortalSchema.js';
 import { createAdminPortalRouter } from './routes/adminPortalRoutes.js';
+import {
+  createPublicCalculatorRouter,
+  createAdminCalculatorRouter,
+} from './routes/calculatorRoutes.js';
+import { ensureCalculatorSchema } from './db/ensureCalculatorSchema.js';
 import * as repo from './db/repository.js';
 import * as authRepo from './db/auth.js';
 import { asyncHandler } from './shared/lib/asyncHandler.js';
@@ -83,6 +88,8 @@ app.get('/', (_req, res) => {
       draftingDesk: 'GET /api/v2/admin/drafting-desk/orders',
       knowledgeArticles: 'GET /api/v2/knowledge/articles',
       lexConsole: 'GET /api/v2/admin/lex/stats',
+      knowledgeCalculators: 'GET /api/v2/knowledge-bank/calculators',
+      adminKnowledgeCalculators: 'GET /api/v2/admin/knowledge-bank/calculators',
     },
   });
 });
@@ -107,6 +114,7 @@ app.use(asyncHandler(async (_req, _res, next) => {
     await ensureAppointmentsSchema();
     await ensureLexSchema();
     await ensureAdminPortalSchema();
+    await ensureCalculatorSchema();
   }
   next();
 }));
@@ -402,6 +410,8 @@ app.get('/api/v2/knowledge-bank/templates/:slug/download', asyncHandler(async (r
 
 app.use('/api/v2/admin/library', createAdminLibraryRouter());
 app.use('/api/v2/admin', createAdminPortalRouter());
+app.use('/api/v2/knowledge-bank', createPublicCalculatorRouter());
+app.use('/api/v2/admin/knowledge-bank', createAdminCalculatorRouter());
 
 // Public Knowledge content (SEO articles) — distinct from free template downloads
 app.get('/api/v2/knowledge/articles', asyncHandler(async (req, res) => {
