@@ -32,9 +32,14 @@ import {
   createPublicLawBooksRouter,
   createAdminLawBooksRouter,
 } from './routes/lawBooksRoutes.js';
+import {
+  createVloRouter,
+  createAdminVloRouter,
+} from './routes/vloRoutes.js';
 import { ensureCalculatorSchema } from './db/ensureCalculatorSchema.js';
 import { ensureKnowledgeReadsSchema } from './db/ensureKnowledgeReadsSchema.js';
 import { ensureLawBooksSchema } from './db/ensureLawBooksSchema.js';
+import { ensureVloSchema } from './db/ensureVloSchema.js';
 import * as repo from './db/repository.js';
 import * as authRepo from './db/auth.js';
 import { asyncHandler } from './shared/lib/asyncHandler.js';
@@ -106,6 +111,11 @@ app.get('/', (_req, res) => {
       adminKnowledgeEntries: 'GET /api/v2/admin/knowledge-bank/entries',
       knowledgeLawBooks: 'GET /api/v2/knowledge-bank/books',
       adminKnowledgeLawBooks: 'GET /api/v2/admin/knowledge-bank/books',
+      vloPlans: 'GET /api/v2/vlo/plans',
+      vloSubscribe: 'POST /api/v2/vlo/subscribe',
+      vloSubscription: 'GET /api/v2/vlo/subscription',
+      vloMatters: 'GET /api/v2/vlo/matters',
+      adminVlo: 'GET /api/v2/admin/vlo/subscriptions',
     },
   });
 });
@@ -133,6 +143,7 @@ app.use(asyncHandler(async (_req, _res, next) => {
     await ensureCalculatorSchema();
     await ensureKnowledgeReadsSchema();
     await ensureLawBooksSchema();
+    await ensureVloSchema();
   }
   next();
 }));
@@ -447,6 +458,8 @@ app.use('/api/v2/knowledge-bank', createPublicKnowledgeReadsRouter());
 app.use('/api/v2/admin/knowledge-bank', createAdminKnowledgeReadsRouter());
 app.use('/api/v2/knowledge-bank', createPublicLawBooksRouter());
 app.use('/api/v2/admin/knowledge-bank', createAdminLawBooksRouter());
+app.use('/api/v2/vlo', createVloRouter());
+app.use('/api/v2/admin/vlo', createAdminVloRouter());
 
 // Public Knowledge content (SEO articles) — distinct from free template downloads
 app.get('/api/v2/knowledge/articles', asyncHandler(async (req, res) => {
@@ -768,57 +781,41 @@ app.post('/api/v2/orders', authMiddleware, asyncHandler(async (req, res) => {
   }
 }));
 
-// ─── Matters (VLO) ──────────────────────────────────────────────────────────
-
-app.get('/api/v2/vlo/matters', authMiddleware, asyncHandler(async (req, res) => {
-  const clientId = await getClientId(req, res);
-  if (!clientId) return;
-  res.json(await repo.getMatters(clientId));
-}));
-
-app.post('/api/v2/vlo/matters', authMiddleware, upload.array('files', 10), asyncHandler(async (req, res) => {
-  const clientId = await getClientId(req, res);
-  if (!clientId) return;
-
-  const { title, description } = req.body;
-  if (!title || !description) {
-    return res.status(400).json({ error: 'title and description are required' });
-  }
-
-  const files = (req.files || []).map((f) => f.originalname || f.filename);
-  const matter = await repo.createMatter(clientId, { title, description, files });
-  res.status(201).json(matter);
-}));
+// ─── Matters (VLO) — primary routes on createVloRouter (/api/v2/vlo/*) ───────
+// Legacy download path kept for older FE clients
 
 app.get('/api/vlo/matters/download/:id', authMiddleware, asyncHandler(async (req, res) => {
   const clientId = await getClientId(req, res);
   if (!clientId) return;
-
-  const matter = await repo.getMatterById(clientId, req.params.id);
-  if (!matter) {
-    return res.status(404).json({ error: 'Matter not found' });
+  const { getClientMatter, getMatterFile, VloError } = await import('./db/vloService.js');
+  try {
+    try {
+      const file = await getMatterFile(req.params.id, { kind: 'completed', clientId });
+      res.setHeader('Content-Type', file.mimeType);
+      res.setHeader('Content-Disposition', `attachment; filename="${file.fileName.replace(/"/g, '')}"`);
+      return res.send(file.buffer);
+    } catch {
+      const matter = (await getClientMatter(clientId, req.params.id)).data;
+      const filename = `${String(matter.title || 'matter').replace(/[^a-z0-9]+/gi, '_')}_opinion.txt`;
+      const content = [
+        'NEXUSLEXIS CONFIDENTIAL ADVISORY OPINION',
+        '',
+        `Matter: ${matter.title}`,
+        `Date: ${matter.date}`,
+        `Status: ${matter.statusLabel || matter.status}`,
+        '',
+        matter.description,
+        '',
+        matter.opinion || 'Opinion pending counsel review.',
+      ].join('\n');
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      return res.send(content);
+    }
+  } catch (err) {
+    if (err instanceof VloError) return res.status(err.status || 400).json({ error: err.message });
+    throw err;
   }
-
-  const filename = matter.attachment || `${matter.title.replace(/[^a-z0-9]/gi, '_')}_opinion.pdf`;
-  const content = [
-    'NEXUSLEXIS CONFIDENTIAL ADVISORY OPINION',
-    '========================================',
-    '',
-    `Matter: ${matter.title}`,
-    `Date: ${matter.date}`,
-    `Status: ${matter.status}`,
-    '',
-    'DESCRIPTION',
-    matter.description,
-    '',
-    matter.opinion ? `OPINION\n${matter.opinion}` : 'Opinion pending counsel review.',
-    '',
-    '--- End of Document ---'
-  ].join('\n');
-
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-  res.send(content);
 }));
 
 // ─── Appointments ───────────────────────────────────────────────────────────
@@ -903,14 +900,20 @@ app.get('/api/v2/appointments', authMiddleware, asyncHandler(async (req, res) =>
 app.get('/api/v2/subscription', authMiddleware, asyncHandler(async (req, res) => {
   const clientId = await getClientId(req, res);
   if (!clientId) return;
-  res.json(await repo.getSubscription(clientId));
+  const { getClientSubscription } = await import('./db/vloService.js');
+  res.json(await getClientSubscription(clientId));
 }));
 
 app.post('/api/v2/subscription/cancel', authMiddleware, asyncHandler(async (req, res) => {
   const clientId = await getClientId(req, res);
   if (!clientId) return;
-  await repo.cancelSubscription(clientId);
-  res.json({ success: true });
+  const { cancelClientSubscription, VloError } = await import('./db/vloService.js');
+  try {
+    res.json(await cancelClientSubscription(clientId));
+  } catch (err) {
+    if (err instanceof VloError) return res.status(err.status || 400).json({ error: err.message });
+    throw err;
+  }
 }));
 
 // ─── Invoices ───────────────────────────────────────────────────────────────

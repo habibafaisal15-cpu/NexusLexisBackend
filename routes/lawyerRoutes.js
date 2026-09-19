@@ -157,25 +157,71 @@ export function createLawyerRouter(lexApiUrl, uploadsDir = 'uploads/') {
   router.get('/vlo/subscribers', authMiddleware, asyncHandler(async (req, res) => {
     const userId = requireLawyer(req, res);
     if (!userId) return;
-    res.json(await pro.getVloSubscribers(userId));
+    const { listLawyerSubscribers } = await import('../db/vloService.js');
+    res.json(await listLawyerSubscribers(userId));
   }));
 
   router.get('/vlo/subscribers/:subscriberId/matters', authMiddleware, asyncHandler(async (req, res) => {
     const userId = requireLawyer(req, res);
     if (!userId) return;
-    res.json(await pro.getVloMattersForSubscriber(userId, req.params.subscriberId));
+    const proto = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+    const host = req.headers['x-forwarded-host'] || req.headers.host;
+    const publicBaseUrl = host ? `${proto}://${host}` : null;
+    const { listLawyerMattersForSubscriber } = await import('../db/vloService.js');
+    res.json(await listLawyerMattersForSubscriber(userId, req.params.subscriberId, { publicBaseUrl }));
   }));
 
   router.patch('/vlo/matters/:matterId', authMiddleware, asyncHandler(async (req, res) => {
     const userId = requireLawyer(req, res);
     if (!userId) return;
-    res.json({ success: true, matterId: req.params.matterId, ...req.body });
+    const proto = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+    const host = req.headers['x-forwarded-host'] || req.headers.host;
+    const publicBaseUrl = host ? `${proto}://${host}` : null;
+    const { updateLawyerMatter, VloError } = await import('../db/vloService.js');
+    try {
+      res.json(await updateLawyerMatter(userId, req.params.matterId, req.body || {}, { publicBaseUrl }));
+    } catch (err) {
+      if (err instanceof VloError) {
+        return res.status(err.status || 400).json({ success: false, ...err.extra, message: err.message });
+      }
+      throw err;
+    }
   }));
 
   router.post('/vlo/matters/:matterId/notes', authMiddleware, asyncHandler(async (req, res) => {
     const userId = requireLawyer(req, res);
     if (!userId) return;
-    res.json({ success: true, note: req.body.note });
+    const { updateLawyerMatter, VloError } = await import('../db/vloService.js');
+    try {
+      res.json(await updateLawyerMatter(userId, req.params.matterId, {
+        lawyerNotes: req.body?.note ?? req.body?.lawyerNotes ?? req.body?.opinion,
+        status: req.body?.status,
+      }));
+    } catch (err) {
+      if (err instanceof VloError) {
+        return res.status(err.status || 400).json({ success: false, ...err.extra, message: err.message });
+      }
+      throw err;
+    }
+  }));
+
+  router.post('/vlo/matters/:matterId/upload', authMiddleware, memoryUpload.single('file'), asyncHandler(async (req, res) => {
+    const userId = requireLawyer(req, res);
+    if (!userId) return;
+    const { uploadMatterCompletedFile, VloError } = await import('../db/vloService.js');
+    try {
+      if (!req.file) return res.status(400).json({ success: false, error: 'file is required', fields: { file: 'required' } });
+      res.json(await uploadMatterCompletedFile(userId, req.params.matterId, {
+        fileName: req.file.originalname,
+        mimeType: req.file.mimetype,
+        buffer: req.file.buffer,
+      }));
+    } catch (err) {
+      if (err instanceof VloError) {
+        return res.status(err.status || 400).json({ success: false, ...err.extra, message: err.message });
+      }
+      throw err;
+    }
   }));
 
   router.get('/clients', authMiddleware, asyncHandler(async (req, res) => {

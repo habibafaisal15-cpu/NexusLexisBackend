@@ -8,9 +8,9 @@ export async function seedDatabase() {
     await query(`
       INSERT INTO vlo_plans (name, monthly_fee, document_reviews_per_month, consultations_per_month, support_channel, compliance_report, has_dedicated_lawyer)
       VALUES
-        ('Starter', 15000, 5, 2, 'Email', 'Quarterly', FALSE),
-        ('Growth', 45000, 15, 8, 'Priority Email', 'Monthly', TRUE),
-        ('Enterprise', 120000, 40, 20, 'Dedicated Line', 'Weekly', TRUE)
+        ('Starter', 15000, 5, 2, 'email', 'quarterly', FALSE),
+        ('Growth', 30000, 15, 8, 'email_whatsapp', 'monthly', TRUE),
+        ('Enterprise', 60000, -1, -1, 'whatsapp_dedicated', 'monthly', TRUE)
     `);
     console.log('VLO plan catalog seeded.');
   }
