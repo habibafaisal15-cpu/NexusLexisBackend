@@ -5,6 +5,12 @@
 import { query } from './index.js';
 import { ensureKnowledgeReadsSchema } from './ensureKnowledgeReadsSchema.js';
 import { buildPaginationMeta } from '../shared/lib/pagination.js';
+import {
+  expiresAtFrom,
+  isExpired,
+  resolveVerifiedAt,
+  toIso,
+} from '../shared/lib/knowledgeValidity.js';
 
 export class KnowledgeReadError extends Error {
   constructor(message, status = 400, extra = {}) {
@@ -100,6 +106,8 @@ export function mapReadEntry(row, { publicBaseUrl = null, compact = false } = {}
     displayOrder: Number(row.display_order) || 0,
     hasFile: Boolean(row.file_content_base64),
     file: fileObject(row, { publicBaseUrl }),
+    verifiedAt: toIso(row.verified_at),
+    expiresAt: expiresAtFrom(row.verified_at),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     updatedBy: row.updated_by != null ? String(row.updated_by) : null,
@@ -128,6 +136,12 @@ export function mapReadEntry(row, { publicBaseUrl = null, compact = false } = {}
       spine: row.spine || null,
       tags: Array.isArray(row.tags) ? row.tags : [],
       readMins: row.read_mins != null ? Number(row.read_mins) : null,
+      judges: row.judges || null,
+      result: row.result || null,
+      caseNo: row.case_no || null,
+      year: row.judgement_year != null ? Number(row.judgement_year) : null,
+      citedBy: row.cited_by || null,
+      bodyText: row.body_text || null,
     });
   }
 
@@ -141,6 +155,8 @@ export function mapReadEntry(row, { publicBaseUrl = null, compact = false } = {}
       keyword: base.keyword,
       status: base.status,
       updatedAt: base.updatedAt,
+      verifiedAt: base.verifiedAt,
+      expiresAt: base.expiresAt,
       hasFile: base.hasFile,
       displayOrder: base.displayOrder,
       placement: base.placement ?? undefined,
@@ -252,6 +268,16 @@ function normalizeBody(body = {}, { partial = false } = {}) {
   if (!partial || body.holding !== undefined) out.holding = body.holding != null ? String(body.holding) : null;
   if (!partial || body.spine !== undefined) out.spine = body.spine || null;
   if (!partial || body.tags !== undefined) out.tags = parseList(body.tags).slice(0, 6);
+  if (!partial || body.judges !== undefined) out.judges = body.judges != null ? String(body.judges) : null;
+  if (!partial || body.result !== undefined) out.result = body.result != null ? String(body.result) : null;
+  if (!partial || body.caseNo !== undefined) out.caseNo = body.caseNo != null ? String(body.caseNo) : null;
+  if (!partial || body.year !== undefined) {
+    const n = Number(body.year);
+    out.year = Number.isFinite(n) ? Math.round(n) : null;
+  }
+  if (!partial || body.citedBy !== undefined) out.citedBy = body.citedBy != null ? String(body.citedBy) : null;
+  if (!partial || body.bodyText !== undefined) out.bodyText = body.bodyText != null ? String(body.bodyText) : null;
+  if (!partial || body.verifiedAt !== undefined) out.verifiedAt = body.verifiedAt;
 
   return out;
 }
@@ -306,6 +332,16 @@ export async function createKnowledgeRead(body = {}, file = null, adminUserId = 
     assertPdfFile(file);
   }
 
+  let verifiedAt = null;
+  try {
+    verifiedAt = resolveVerifiedAt({
+      verifiedAt: fields.verifiedAt,
+      stampNow: fields.status === 'published',
+    });
+  } catch (err) {
+    fail(err.message || 'Invalid verifiedAt', 422, err.fields || { verifiedAt: 'invalid' });
+  }
+
   try {
     const result = await query(
       `INSERT INTO knowledge_reads (
@@ -314,13 +350,17 @@ export async function createKnowledgeRead(body = {}, file = null, adminUserId = 
          placement, kicker, band, author, credit, read_mins,
          tag, chapters, amended,
          court, cite, holding, spine, tags,
-         file_name, file_mime, file_size_bytes, file_content_base64, updated_by
+         judges, result, case_no, judgement_year, cited_by, body_text,
+         file_name, file_mime, file_size_bytes, file_content_base64,
+         verified_at, updated_by
        ) VALUES (
          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,
          $13,$14,$15,$16,$17,$18,
          $19,$20,$21,
          $22,$23,$24,$25,$26::jsonb,
-         $27,$28,$29,$30,$31
+         $27,$28,$29,$30,$31,$32,
+         $33,$34,$35,$36,
+         $37,$38
        )
        RETURNING *`,
       [
@@ -350,10 +390,17 @@ export async function createKnowledgeRead(body = {}, file = null, adminUserId = 
         fields.holding || null,
         fields.spine || null,
         JSON.stringify(fields.tags || []),
+        fields.judges || null,
+        fields.result || null,
+        fields.caseNo || null,
+        fields.year ?? null,
+        fields.citedBy || null,
+        fields.bodyText || null,
         hasFile ? (file.originalname || `${fields.slug}.pdf`) : null,
         hasFile ? 'application/pdf' : null,
         hasFile ? file.buffer.length : null,
         hasFile ? file.buffer.toString('base64') : null,
+        verifiedAt,
         adminUserId || null,
       ]
     );
@@ -429,6 +476,12 @@ export async function updateKnowledgeRead(id, body = {}, adminUserId = null, { p
     holding: patch.holding !== undefined ? patch.holding : row.holding,
     spine: patch.spine !== undefined ? patch.spine : row.spine,
     tags: patch.tags !== undefined ? patch.tags : (row.tags || []),
+    judges: patch.judges !== undefined ? patch.judges : row.judges,
+    result: patch.result !== undefined ? patch.result : row.result,
+    case_no: patch.caseNo !== undefined ? patch.caseNo : row.case_no,
+    judgement_year: patch.year !== undefined ? patch.year : row.judgement_year,
+    cited_by: patch.citedBy !== undefined ? patch.citedBy : row.cited_by,
+    body_text: patch.bodyText !== undefined ? patch.bodyText : row.body_text,
   };
 
   const hasFile = Boolean(row.file_content_base64);
@@ -442,6 +495,19 @@ export async function updateKnowledgeRead(id, body = {}, adminUserId = null, { p
     await assertPlacementRules(next.pillar, next.placement, row.id);
   }
 
+  let verifiedAt = row.verified_at;
+  try {
+    if (patch.verifiedAt !== undefined || (next.status === 'published' && !row.verified_at)) {
+      verifiedAt = resolveVerifiedAt({
+        verifiedAt: patch.verifiedAt !== undefined ? patch.verifiedAt : undefined,
+        existingVerifiedAt: row.verified_at,
+        stampNow: patch.verifiedAt === undefined && next.status === 'published' && !row.verified_at,
+      });
+    }
+  } catch (err) {
+    fail(err.message || 'Invalid verifiedAt', 422, err.fields || { verifiedAt: 'invalid' });
+  }
+
   try {
     const updated = await query(
       `UPDATE knowledge_reads SET
@@ -450,7 +516,9 @@ export async function updateKnowledgeRead(id, body = {}, adminUserId = null, { p
          display_order = $13, placement = $14, kicker = $15, band = $16, author = $17, credit = $18,
          read_mins = $19, tag = $20, chapters = $21, amended = $22,
          court = $23, cite = $24, holding = $25, spine = $26, tags = $27::jsonb,
-         updated_at = CURRENT_TIMESTAMP, updated_by = $28
+         judges = $28, result = $29, case_no = $30, judgement_year = $31, cited_by = $32, body_text = $33,
+         verified_at = $34,
+         updated_at = CURRENT_TIMESTAMP, updated_by = $35
        WHERE id = $1
        RETURNING *`,
       [
@@ -481,6 +549,13 @@ export async function updateKnowledgeRead(id, body = {}, adminUserId = null, { p
         next.holding,
         next.spine,
         JSON.stringify(next.tags || []),
+        next.judges,
+        next.result,
+        next.case_no,
+        next.judgement_year,
+        next.cited_by,
+        next.body_text,
+        verifiedAt,
         adminUserId || null,
       ]
     );
@@ -577,8 +652,12 @@ export async function getPublishedBySlug(pillar, slug, { publicBaseUrl = null } 
      WHERE pillar = $1 AND slug = $2 AND status = 'published'`,
     [pillar, slug]
   );
-  if (!result.rows[0]) throw new KnowledgeReadError('Not found', 404);
-  return { success: true, data: mapReadEntry(result.rows[0], { publicBaseUrl }) };
+  const row = result.rows[0];
+  if (!row) throw new KnowledgeReadError('Not found', 404);
+  if ((pillar === 'articles' || pillar === 'summaries') && isExpired(row.verified_at)) {
+    throw new KnowledgeReadError('Not found', 404);
+  }
+  return { success: true, data: mapReadEntry(row, { publicBaseUrl }) };
 }
 
 export async function getPublishedFile(pillar, slug) {
@@ -590,6 +669,9 @@ export async function getPublishedFile(pillar, slug) {
   );
   const row = result.rows[0];
   if (!row?.file_content_base64) throw new KnowledgeReadError('Not found', 404);
+  if ((pillar === 'articles' || pillar === 'summaries') && isExpired(row.verified_at)) {
+    throw new KnowledgeReadError('Not found', 404);
+  }
   return {
     fileName: row.file_name || `${row.slug}.pdf`,
     mimeType: row.file_mime || 'application/pdf',
@@ -687,7 +769,8 @@ function sortPublished(rows) {
 export async function listPublicArticles({ search, publicBaseUrl } = {}) {
   await ensureKnowledgeReadsSchema();
   const params = ['articles', 'published'];
-  let where = `pillar = $1 AND status = $2`;
+  let where = `pillar = $1 AND status = $2
+    AND (verified_at IS NULL OR verified_at > (CURRENT_TIMESTAMP - INTERVAL '6 months'))`;
   if (search) {
     params.push(`%${String(search).trim()}%`);
     where += ` AND (title ILIKE $3 OR COALESCE(excerpt,'') ILIKE $3 OR COALESCE(keyword,'') ILIKE $3)`;
@@ -716,7 +799,8 @@ export async function listPublicSummaries({ tag, publicBaseUrl } = {}) {
   await ensureKnowledgeReadsSchema();
   const filters = ['All', 'Constitutional', 'Criminal', 'Civil', 'Family', 'Property', 'Tax'];
   const params = ['summaries', 'published'];
-  let where = `pillar = $1 AND status = $2`;
+  let where = `pillar = $1 AND status = $2
+    AND (verified_at IS NULL OR verified_at > (CURRENT_TIMESTAMP - INTERVAL '6 months'))`;
   if (tag && tag !== 'All') {
     if (!SUMMARY_TAGS.has(tag)) fail('Unknown tag', 422, { tag: 'invalid' });
     params.push(tag);

@@ -220,6 +220,23 @@ function mapLibraryTemplateRow(row, { includeFile = false, owned = false, ownedO
   const lawyerProfileId = row.lawyer_profile_id != null
     ? String(row.lawyer_profile_id)
     : null;
+  // Lazy import keeps repository boot light; validity helpers are pure.
+  let verifiedAt = row.verified_at || null;
+  let expiresAt = null;
+  try {
+    // sync require-style via already-loaded ESM — inlined ISO only if columns present
+    if (verifiedAt) {
+      const d = new Date(verifiedAt);
+      if (!Number.isNaN(d.getTime())) {
+        verifiedAt = d.toISOString();
+        const exp = new Date(d.getTime());
+        exp.setUTCMonth(exp.getUTCMonth() + 6);
+        expiresAt = exp.toISOString();
+      }
+    }
+  } catch { /* ignore */ }
+  const createdAt = row.created_at ? new Date(row.created_at).toISOString() : null;
+  const updatedAt = row.updated_at ? new Date(row.updated_at).toISOString() : null;
 
   const template = {
     id: row.service_id || row.id,
@@ -249,6 +266,10 @@ function mapLibraryTemplateRow(row, { includeFile = false, owned = false, ownedO
     listing: accessType === 'public' ? 'knowledge_bank' : 'library',
     isFree: accessType === 'public',
     isPaid: accessType === 'paid',
+    verifiedAt,
+    expiresAt,
+    createdAt,
+    updatedAt,
     hasTemplateFile: hasFile,
     templateFileName: row.template_file_name || null,
     templateMimeType: row.template_mime_type || null,
@@ -303,6 +324,7 @@ function buildLibraryFilterSql({
   includeInactive = false,
   accessType = null,
   onlyInactive = false,
+  hideExpired = false,
 } = {}) {
   const normalizedAccess = accessType ? normalizeAccessType(accessType, { fallback: null }) : null;
   const params = [];
@@ -317,6 +339,15 @@ function buildLibraryFilterSql({
   if (normalizedAccess) {
     params.push(normalizedAccess);
     where += ` AND s.access_type = $${params.length}`;
+  }
+
+  // NL-BE-KB-DYN-001 — public KB catalog hides free templates past 6 months from verified_at
+  if (hideExpired) {
+    where += ` AND (
+      s.access_type IS DISTINCT FROM 'public'
+      OR s.verified_at IS NULL
+      OR s.verified_at > (CURRENT_TIMESTAMP - INTERVAL '6 months')
+    )`;
   }
 
   if (category) {
@@ -360,6 +391,7 @@ export async function getLibraryCatalog({
   paginate = false,
   page,
   limit,
+  hideExpired = false,
 } = {}) {
   const ownedMap = await getOwnedLibraryPurchases(clientId);
   const { where, params, normalizedAccess } = buildLibraryFilterSql({
@@ -370,6 +402,7 @@ export async function getLibraryCatalog({
     includeInactive,
     onlyInactive,
     accessType,
+    hideExpired,
   });
 
   const fromJoin = `
@@ -402,6 +435,7 @@ export async function getLibraryCatalog({
             s.id AS service_id, s.name, s.slug, s.price, s.delivery_days, s.intake_schema,
             s.description, s.is_active, s.access_type, s.template_file_name, s.template_mime_type,
             s.code, s.block, s.language, s.author, s.lawyer_profile_id, s.version,
+            s.verified_at, s.created_at, s.updated_at,
             CASE WHEN s.template_content_base64 IS NOT NULL THEN TRUE ELSE FALSE END AS has_file
      ${fromJoin}
      ORDER BY sc.display_order ASC, sc.name ASC, s.name ASC
@@ -516,6 +550,7 @@ export async function getLibraryTemplate(slug, {
     `SELECT s.id, s.name, s.slug, s.price, s.delivery_days, s.intake_schema,
             s.description, s.is_active, s.access_type, s.template_file_name, s.template_mime_type,
             s.code, s.block, s.language, s.author, s.lawyer_profile_id, s.version,
+            s.verified_at, s.created_at, s.updated_at,
             ${includeFile ? 's.template_content_base64,' : ''}
             sc.id AS category_id, sc.name AS category_name, sc.slug AS category_slug,
             sc.description AS category_description, sc.icon AS category_icon
@@ -740,6 +775,7 @@ export async function createLibraryTemplate({
   lawyerProfileId,
   version,
   file,
+  verifiedAt,
 }) {
   const templateName = String(name || '').trim();
   if (!templateName) throw new Error('Template name is required');
@@ -774,14 +810,28 @@ export async function createLibraryTemplate({
   }
   const resolvedAuthor = await resolveVerifiedTemplateAuthor(lawyerProfileId, author);
 
+  const { resolveVerifiedAt } = await import('../shared/lib/knowledgeValidity.js');
+  const stampPublic = resolvedAccessType === 'public' && isActive !== false;
+  let resolvedVerifiedAt = null;
+  try {
+    resolvedVerifiedAt = resolveVerifiedAt({
+      verifiedAt,
+      stampNow: stampPublic,
+    });
+  } catch (err) {
+    throw new Error(err.message || 'Invalid verifiedAt');
+  }
+
   const result = await query(
     `INSERT INTO services (
        category_id, name, slug, price, delivery_days, intake_schema,
        description, is_active, access_type, code, block, language, author, lawyer_profile_id, version,
-       template_file_name, template_mime_type, template_content_base64
-     ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+       template_file_name, template_mime_type, template_content_base64,
+       verified_at, created_at, updated_at
+     ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
      RETURNING id, name, slug, price, delivery_days, intake_schema, description, is_active, access_type,
                code, block, language, author, lawyer_profile_id, version, template_file_name, template_mime_type,
+               verified_at, created_at, updated_at,
                CASE WHEN template_content_base64 IS NOT NULL THEN TRUE ELSE FALSE END AS has_file`,
     [
       resolvedCategoryId,
@@ -804,6 +854,7 @@ export async function createLibraryTemplate({
       file?.fileName || null,
       file?.mimeType || null,
       file?.contentBase64 || null,
+      resolvedVerifiedAt,
     ]
   );
 
@@ -833,9 +884,10 @@ export async function updateLibraryTemplate(idOrSlug, {
   version,
   file,
   clearFile = false,
+  verifiedAt,
 }) {
   const existing = await query(
-    `SELECT id, slug FROM services
+    `SELECT id, slug, access_type, is_active, verified_at FROM services
      WHERE id::text = $1 OR slug = $1
      LIMIT 1`,
     [String(idOrSlug)]
@@ -881,8 +933,10 @@ export async function updateLibraryTemplate(idOrSlug, {
     sets.push(`intake_schema = $${params.length}::jsonb`);
   }
   if (isActive !== undefined) push('is_active', isActive !== false && isActive !== 'false');
+  let nextAccess = current.access_type;
   if (accessType !== undefined) {
     const resolvedAccessType = normalizeAccessType(accessType, { fallback: 'paid' });
+    nextAccess = resolvedAccessType;
     push('access_type', resolvedAccessType);
     if (resolvedAccessType === 'public') {
       push('price', 0);
@@ -903,9 +957,27 @@ export async function updateLibraryTemplate(idOrSlug, {
     push('template_content_base64', file.contentBase64);
   }
 
+  const nextActive = isActive !== undefined
+    ? (isActive !== false && isActive !== 'false')
+    : (current.is_active !== false);
+  const becomingPublicLive = normalizeAccessType(nextAccess) === 'public' && nextActive;
+  if (verifiedAt !== undefined || (becomingPublicLive && !current.verified_at)) {
+    const { resolveVerifiedAt } = await import('../shared/lib/knowledgeValidity.js');
+    try {
+      push('verified_at', resolveVerifiedAt({
+        verifiedAt: verifiedAt !== undefined ? verifiedAt : undefined,
+        existingVerifiedAt: current.verified_at,
+        stampNow: verifiedAt === undefined,
+      }));
+    } catch (err) {
+      throw new Error(err.message || 'Invalid verifiedAt');
+    }
+  }
+
   if (!sets.length) {
     return getLibraryTemplate(current.slug, { includeInactive: true });
   }
+  push('updated_at', new Date().toISOString());
 
   params.push(current.id);
   await query(

@@ -262,6 +262,7 @@ export function createAdminLibraryRouter() {
             || req.body.authorProfileId,
           version: req.body.version,
           isActive: parseBoolean(req.body.isActive ?? req.body.active, true),
+          verifiedAt: req.body.verifiedAt || undefined,
           file: filePayload(req.file),
         });
         // Optional: remove draft after successful publish
@@ -319,6 +320,7 @@ export function createAdminLibraryRouter() {
         version: req.body.version,
         isActive: parseBoolean(req.body.isActive ?? req.body.active),
         clearFile: req.body.clearFile === true || req.body.clearFile === 'true',
+        verifiedAt: req.body.verifiedAt !== undefined ? req.body.verifiedAt : undefined,
         file: filePayload(req.file),
       });
       if (!template) {
@@ -354,6 +356,7 @@ export function createAdminLibraryRouter() {
         version: req.body.version,
         isActive: parseBoolean(req.body.isActive ?? req.body.active),
         clearFile: parseBoolean(req.body.clearFile, false),
+        verifiedAt: req.body.verifiedAt !== undefined ? req.body.verifiedAt : undefined,
         file: filePayload(req.file),
       });
       if (!template) return res.status(404).json({ error: 'Template not found' });

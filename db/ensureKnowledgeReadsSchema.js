@@ -43,20 +43,44 @@ export async function ensureKnowledgeReadsSchema() {
         spine VARCHAR(10)
           CHECK (spine IS NULL OR spine IN ('sc', 'hc', 'lhc')),
         tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+        -- judgements extras (NL-BE-KB-DYN-001)
+        judges VARCHAR(255),
+        result VARCHAR(120),
+        case_no VARCHAR(120),
+        judgement_year INT,
+        cited_by TEXT,
+        body_text TEXT,
         -- PDF
         file_name VARCHAR(255),
         file_mime VARCHAR(100),
         file_size_bytes INT,
         file_content_base64 TEXT,
+        -- validity (articles/summaries primarily)
+        verified_at TIMESTAMPTZ,
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
         UNIQUE (slug)
       )
     `);
+    await query(`ALTER TABLE knowledge_reads ADD COLUMN IF NOT EXISTS judges VARCHAR(255)`);
+    await query(`ALTER TABLE knowledge_reads ADD COLUMN IF NOT EXISTS result VARCHAR(120)`);
+    await query(`ALTER TABLE knowledge_reads ADD COLUMN IF NOT EXISTS case_no VARCHAR(120)`);
+    await query(`ALTER TABLE knowledge_reads ADD COLUMN IF NOT EXISTS judgement_year INT`);
+    await query(`ALTER TABLE knowledge_reads ADD COLUMN IF NOT EXISTS cited_by TEXT`);
+    await query(`ALTER TABLE knowledge_reads ADD COLUMN IF NOT EXISTS body_text TEXT`);
+    await query(`ALTER TABLE knowledge_reads ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ`);
+    await query(`
+      UPDATE knowledge_reads
+      SET verified_at = COALESCE(verified_at, updated_at, created_at, CURRENT_TIMESTAMP)
+      WHERE status = 'published'
+        AND pillar IN ('articles', 'summaries')
+        AND verified_at IS NULL
+    `);
     await query(`CREATE INDEX IF NOT EXISTS idx_kb_reads_pillar_status ON knowledge_reads (pillar, status)`);
     await query(`CREATE INDEX IF NOT EXISTS idx_kb_reads_display ON knowledge_reads (pillar, display_order ASC, updated_at DESC)`);
     await query(`CREATE INDEX IF NOT EXISTS idx_kb_reads_placement ON knowledge_reads (pillar, placement) WHERE pillar = 'articles'`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_kb_reads_verified ON knowledge_reads (verified_at)`);
   })().catch((err) => {
     readyPromise = null;
     throw err;

@@ -24,8 +24,21 @@ export async function ensureLibrarySchema() {
     await addColumn('ALTER TABLE services ADD COLUMN IF NOT EXISTS author VARCHAR(255)');
     await addColumn('ALTER TABLE services ADD COLUMN IF NOT EXISTS lawyer_profile_id BIGINT REFERENCES lawyer_profiles(id)');
     await addColumn('ALTER TABLE services ADD COLUMN IF NOT EXISTS version VARCHAR(50)');
+    // NL-BE-KB-DYN-001 — 6-month validity for public (KB free) templates
+    await addColumn('ALTER TABLE services ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ');
+    await addColumn('ALTER TABLE services ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP');
+    await addColumn('ALTER TABLE services ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP');
 
     await query(`UPDATE services SET is_active = TRUE WHERE is_active IS NULL`);
+    await query(`UPDATE services SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL`);
+    await query(`UPDATE services SET updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP) WHERE updated_at IS NULL`);
+    await query(`
+      UPDATE services
+      SET verified_at = COALESCE(verified_at, updated_at, created_at, CURRENT_TIMESTAMP)
+      WHERE access_type = 'public'
+        AND COALESCE(is_active, TRUE) IS TRUE
+        AND verified_at IS NULL
+    `);
     await query(`UPDATE services SET access_type = 'paid' WHERE access_type IS NULL OR access_type = ''`);
     await query(`UPDATE services SET language = 'English' WHERE language IS NULL OR language = ''`);
     await query(`UPDATE services SET version = '1.0' WHERE version IS NULL OR version = ''`);

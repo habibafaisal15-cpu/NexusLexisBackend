@@ -28,8 +28,13 @@ import {
   createPublicKnowledgeReadsRouter,
   createAdminKnowledgeReadsRouter,
 } from './routes/knowledgeReadsRoutes.js';
+import {
+  createPublicLawBooksRouter,
+  createAdminLawBooksRouter,
+} from './routes/lawBooksRoutes.js';
 import { ensureCalculatorSchema } from './db/ensureCalculatorSchema.js';
 import { ensureKnowledgeReadsSchema } from './db/ensureKnowledgeReadsSchema.js';
+import { ensureLawBooksSchema } from './db/ensureLawBooksSchema.js';
 import * as repo from './db/repository.js';
 import * as authRepo from './db/auth.js';
 import { asyncHandler } from './shared/lib/asyncHandler.js';
@@ -99,6 +104,8 @@ app.get('/', (_req, res) => {
       knowledgeSummaries: 'GET /api/v2/knowledge-bank/summaries',
       knowledgeJudgements: 'GET /api/v2/knowledge-bank/judgements',
       adminKnowledgeEntries: 'GET /api/v2/admin/knowledge-bank/entries',
+      knowledgeLawBooks: 'GET /api/v2/knowledge-bank/books',
+      adminKnowledgeLawBooks: 'GET /api/v2/admin/knowledge-bank/books',
     },
   });
 });
@@ -125,6 +132,7 @@ app.use(asyncHandler(async (_req, _res, next) => {
     await ensureAdminPortalSchema();
     await ensureCalculatorSchema();
     await ensureKnowledgeReadsSchema();
+    await ensureLawBooksSchema();
   }
   next();
 }));
@@ -396,6 +404,7 @@ app.get('/api/v2/knowledge-bank/catalog', asyncHandler(async (req, res) => {
     block,
     language: language || lang,
     accessType: 'public',
+    hideExpired: true,
   }));
 }));
 
@@ -404,10 +413,22 @@ app.get('/api/v2/knowledge-bank/templates/:slug', asyncHandler(async (req, res) 
   if (!template) {
     return res.status(404).json({ error: 'Knowledge bank template not found' });
   }
+  const { isExpired } = await import('./shared/lib/knowledgeValidity.js');
+  if (isExpired(template.verifiedAt)) {
+    return res.status(404).json({ error: 'Knowledge bank template not found' });
+  }
   res.json(template);
 }));
 
 app.get('/api/v2/knowledge-bank/templates/:slug/download', asyncHandler(async (req, res) => {
+  const template = await repo.getLibraryTemplate(req.params.slug, { accessType: 'public' });
+  if (!template?.isActive) {
+    return res.status(404).json({ error: 'Knowledge bank file not found' });
+  }
+  const { isExpired } = await import('./shared/lib/knowledgeValidity.js');
+  if (isExpired(template.verifiedAt)) {
+    return res.status(404).json({ error: 'Knowledge bank file not found' });
+  }
   const sample = await repo.getLibraryTemplateSample(req.params.slug, { accessType: 'public' });
   if (!sample || !sample.isActive) {
     return res.status(404).json({ error: 'Knowledge bank file not found' });
@@ -424,6 +445,8 @@ app.use('/api/v2/knowledge-bank', createPublicCalculatorRouter());
 app.use('/api/v2/admin/knowledge-bank', createAdminCalculatorRouter());
 app.use('/api/v2/knowledge-bank', createPublicKnowledgeReadsRouter());
 app.use('/api/v2/admin/knowledge-bank', createAdminKnowledgeReadsRouter());
+app.use('/api/v2/knowledge-bank', createPublicLawBooksRouter());
+app.use('/api/v2/admin/knowledge-bank', createAdminLawBooksRouter());
 
 // Public Knowledge content (SEO articles) — distinct from free template downloads
 app.get('/api/v2/knowledge/articles', asyncHandler(async (req, res) => {
