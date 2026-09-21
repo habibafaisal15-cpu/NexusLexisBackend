@@ -260,6 +260,23 @@ export function createAdminKnowledgeReadsRouter() {
     }
   }));
 
+  // NL-BE-KB-DELETE-001 — hard delete entry (default). ?hard=false → retire only.
+  router.delete('/entries/:id', asyncHandler(async (req, res) => {
+    const { deleteKnowledgeRead, KnowledgeReadError } = await import('../db/knowledgeReadsService.js');
+    try {
+      const hard = !(req.query.hard === 'false' || req.query.hard === '0');
+      res.json(await deleteKnowledgeRead(
+        req.params.id,
+        { hard },
+        getUserId(req),
+        { publicBaseUrl: publicBase(req) }
+      ));
+    } catch (err) {
+      if (err instanceof KnowledgeReadError) return sendError(res, err);
+      throw err;
+    }
+  }));
+
   router.use((err, _req, res, _next) => {
     if (err instanceof multer.MulterError) {
       const status = err.code === 'LIMIT_FILE_SIZE' ? 413 : 400;

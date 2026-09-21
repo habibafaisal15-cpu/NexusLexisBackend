@@ -637,6 +637,27 @@ export async function deleteKnowledgeReadFile(id, adminUserId = null, { publicBa
   return { success: true, data: mapReadEntry(updated.rows[0], { publicBaseUrl }) };
 }
 
+/** NL-BE-KB-DELETE-001 — hard delete entry (+ PDF). hard=false → retire (soft). Default hard=true. */
+export async function deleteKnowledgeRead(id, { hard = true } = {}, adminUserId = null, { publicBaseUrl = null } = {}) {
+  await ensureKnowledgeReadsSchema();
+  const existing = await query(`SELECT id, status FROM knowledge_reads WHERE id = $1`, [Number(id)]);
+  if (!existing.rows[0]) throw new KnowledgeReadError('Entry not found', 404);
+
+  if (!hard) {
+    return patchKnowledgeReadStatus(id, 'retired', adminUserId, { publicBaseUrl });
+  }
+
+  await query(`DELETE FROM knowledge_reads WHERE id = $1`, [Number(id)]);
+  return {
+    success: true,
+    data: {
+      id: String(existing.rows[0].id),
+      deleted: true,
+      hardDeleted: true,
+    },
+  };
+}
+
 export async function getKnowledgeReadById(id, { publicBaseUrl = null } = {}) {
   await ensureKnowledgeReadsSchema();
   const result = await query(`SELECT * FROM knowledge_reads WHERE id = $1`, [Number(id)]);
