@@ -108,8 +108,9 @@ function normalizeSampleChapter(value) {
 function fileObject(row, { publicBaseUrl = null } = {}) {
   if (!row.file_content_base64) return null;
   const base = publicBaseUrl || '';
+  const bust = row.updated_at ? `?v=${new Date(row.updated_at).getTime()}` : '';
   return {
-    url: `${base}/api/v2/knowledge-bank/books/${row.slug}/file`,
+    url: `${base}/api/v2/knowledge-bank/books/${row.slug}/file${bust}`,
     fileName: row.file_name || `${row.slug}.pdf`,
     mime: row.file_mime || 'application/pdf',
     sizeBytes: row.file_size_bytes != null ? Number(row.file_size_bytes) : null,
@@ -189,13 +190,52 @@ function validateEnums(fields) {
   }
 }
 
-function validatePublish(fields) {
+function validatePublish(fields, { hasFile = false } = {}) {
   if (!fields.title?.trim()) fail('title is required', 422, { title: 'required' });
   if (!String(fields.description || '').trim()) {
     fail('description is required when publishing', 422, { description: 'required' });
   }
   if (!fields.kind || !KINDS.has(fields.kind)) fail('kind is required', 422, { kind: 'required' });
   if (!fields.subject || !SUBJECTS.has(fields.subject)) fail('subject is required', 422, { subject: 'required' });
+  if (!hasFile) {
+    fail('A PDF or DOCX volume file is required to publish', 400, { file: 'required' });
+  }
+}
+
+const MAX_BOOK_FILE_BYTES = 25 * 1024 * 1024;
+const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+function assertVolumeFile(file) {
+  if (!file?.buffer) fail('file is required', 400, { file: 'required' });
+  if (file.buffer.length > MAX_BOOK_FILE_BYTES) {
+    throw new LawBookError('File too large — cap 25 MB', 400, {
+      success: false,
+      error: 'File too large — cap 25 MB',
+      message: 'File too large — cap 25 MB',
+      fields: { file: 'too_large' },
+    });
+  }
+  const mime = String(file.mimetype || file.mimeType || '').toLowerCase();
+  const name = String(file.originalname || file.fileName || '').toLowerCase();
+  const isPdf = mime === 'application/pdf' || name.endsWith('.pdf')
+    || file.buffer.slice(0, 4).toString() === '%PDF';
+  const isDocx = mime === DOCX_MIME
+    || name.endsWith('.docx')
+    || (file.buffer.slice(0, 2).toString() === 'PK' && name.endsWith('.docx'));
+  if (!isPdf && !isDocx) {
+    throw new LawBookError('file must be application/pdf or DOCX', 400, {
+      success: false,
+      error: 'file must be application/pdf or DOCX',
+      message: 'file must be application/pdf or DOCX',
+      fields: { file: 'invalid_type' },
+    });
+  }
+  return {
+    fileName: file.originalname || file.fileName || (isPdf ? 'volume.pdf' : 'volume.docx'),
+    mimeType: isPdf ? 'application/pdf' : DOCX_MIME,
+    buffer: file.buffer,
+    sizeBytes: file.buffer.length,
+  };
 }
 
 async function findByIdOrSlug(idOrSlug) {
@@ -209,7 +249,7 @@ async function findByIdOrSlug(idOrSlug) {
   return bySlug.rows[0] || null;
 }
 
-export async function createLawBook(body = {}, adminUserId = null, { publicBaseUrl = null } = {}) {
+export async function createLawBook(body = {}, adminUserId = null, { publicBaseUrl = null, file = null } = {}) {
   await ensureLawBooksSchema();
   const fields = normalizeBody(body, { partial: false });
   if (!fields.title) fail('title is required', 422, { title: 'required' });
@@ -223,16 +263,22 @@ export async function createLawBook(body = {}, adminUserId = null, { publicBaseU
   fields.languages = fields.languages || ['EN'];
   fields.contents = fields.contents || [];
   validateEnums(fields);
-  if (fields.status === 'published') validatePublish(fields);
+
+  let volume = null;
+  if (file) volume = assertVolumeFile(file);
+  if (fields.status === 'published') validatePublish(fields, { hasFile: Boolean(volume) });
 
   try {
     const result = await query(
       `INSERT INTO knowledge_law_books (
          slug, status, kind, subject, title, description,
          spine_band, spine_code, edition, year, pages, languages,
-         spine_tone, author, contents, sample_chapter, cover_url, updated_by
+         spine_tone, author, contents, sample_chapter, cover_url,
+         file_name, file_mime, file_size_bytes, file_content_base64,
+         updated_by
        ) VALUES (
-         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,$15::jsonb,$16::jsonb,$17,$18
+         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,$15::jsonb,$16::jsonb,$17,
+         $18,$19,$20,$21,$22
        ) RETURNING *`,
       [
         fields.slug,
@@ -252,6 +298,10 @@ export async function createLawBook(body = {}, adminUserId = null, { publicBaseU
         JSON.stringify(fields.contents),
         fields.sampleChapter ? JSON.stringify(fields.sampleChapter) : null,
         fields.coverUrl || null,
+        volume?.fileName || null,
+        volume?.mimeType || null,
+        volume?.sizeBytes ?? null,
+        volume ? volume.buffer.toString('base64') : null,
         adminUserId || null,
       ]
     );
@@ -269,7 +319,7 @@ export async function createLawBook(body = {}, adminUserId = null, { publicBaseU
   }
 }
 
-export async function updateLawBook(idOrSlug, body = {}, adminUserId = null, { publicBaseUrl = null } = {}) {
+export async function updateLawBook(idOrSlug, body = {}, adminUserId = null, { publicBaseUrl = null, file = null } = {}) {
   await ensureLawBooksSchema();
   const row = await findByIdOrSlug(idOrSlug);
   if (!row) throw new LawBookError('Book not found', 404);
@@ -284,6 +334,9 @@ export async function updateLawBook(idOrSlug, body = {}, adminUserId = null, { p
       fields: { slug: 'locked' },
     });
   }
+
+  let volume = null;
+  if (file) volume = assertVolumeFile(file);
 
   const next = {
     slug: patch.slug ?? row.slug,
@@ -305,13 +358,14 @@ export async function updateLawBook(idOrSlug, body = {}, adminUserId = null, { p
     cover_url: patch.coverUrl !== undefined ? patch.coverUrl : row.cover_url,
   };
 
+  const hasFile = Boolean(volume) || Boolean(row.file_content_base64);
   if (next.status === 'published') {
     validatePublish({
       title: next.title,
       description: next.description,
       kind: next.kind,
       subject: next.subject,
-    });
+    }, { hasFile });
   }
 
   try {
@@ -321,6 +375,10 @@ export async function updateLawBook(idOrSlug, body = {}, adminUserId = null, { p
          spine_band = $8, spine_code = $9, edition = $10, year = $11, pages = $12,
          languages = $13::jsonb, spine_tone = $14, author = $15, contents = $16::jsonb,
          sample_chapter = $17::jsonb, cover_url = $18,
+         file_name = COALESCE($20, file_name),
+         file_mime = COALESCE($21, file_mime),
+         file_size_bytes = COALESCE($22, file_size_bytes),
+         file_content_base64 = COALESCE($23, file_content_base64),
          updated_at = CURRENT_TIMESTAMP, updated_by = $19
        WHERE id = $1
        RETURNING *`,
@@ -344,6 +402,10 @@ export async function updateLawBook(idOrSlug, body = {}, adminUserId = null, { p
         next.sample_chapter ? JSON.stringify(next.sample_chapter) : null,
         next.cover_url,
         adminUserId || null,
+        volume?.fileName || null,
+        volume?.mimeType || null,
+        volume?.sizeBytes ?? null,
+        volume ? volume.buffer.toString('base64') : null,
       ]
     );
     return { success: true, data: mapLawBook(updated.rows[0], { publicBaseUrl }) };
@@ -361,6 +423,71 @@ export async function updateLawBook(idOrSlug, body = {}, adminUserId = null, { p
 
 export async function patchLawBookStatus(idOrSlug, status, adminUserId = null, opts = {}) {
   return updateLawBook(idOrSlug, { status }, adminUserId, opts);
+}
+
+export async function uploadLawBookFile(idOrSlug, file, { fileName } = {}, adminUserId = null, { publicBaseUrl = null } = {}) {
+  await ensureLawBooksSchema();
+  const row = await findByIdOrSlug(idOrSlug);
+  if (!row) throw new LawBookError('Book not found', 404);
+  const volume = assertVolumeFile({
+    ...file,
+    originalname: fileName || file.originalname || file.fileName,
+    fileName: fileName || file.originalname || file.fileName,
+  });
+
+  const updated = await query(
+    `UPDATE knowledge_law_books SET
+       file_name = $2,
+       file_mime = $3,
+       file_size_bytes = $4,
+       file_content_base64 = $5,
+       updated_at = CURRENT_TIMESTAMP,
+       updated_by = $6
+     WHERE id = $1
+     RETURNING *`,
+    [
+      row.id,
+      volume.fileName,
+      volume.mimeType,
+      volume.sizeBytes,
+      volume.buffer.toString('base64'),
+      adminUserId || null,
+    ]
+  );
+  return { success: true, data: mapLawBook(updated.rows[0], { publicBaseUrl }) };
+}
+
+export async function deleteLawBookFile(idOrSlug, adminUserId = null, { publicBaseUrl = null } = {}) {
+  await ensureLawBooksSchema();
+  const row = await findByIdOrSlug(idOrSlug);
+  if (!row) throw new LawBookError('Book not found', 404);
+
+  const updated = await query(
+    `UPDATE knowledge_law_books SET
+       file_name = NULL,
+       file_mime = NULL,
+       file_size_bytes = NULL,
+       file_content_base64 = NULL,
+       status = 'draft',
+       updated_at = CURRENT_TIMESTAMP,
+       updated_by = $2
+     WHERE id = $1
+     RETURNING *`,
+    [row.id, adminUserId || null]
+  );
+  return { success: true, data: mapLawBook(updated.rows[0], { publicBaseUrl }) };
+}
+
+export async function getLawBookFile(idOrSlug, { publicOnly = false } = {}) {
+  await ensureLawBooksSchema();
+  const row = await findByIdOrSlug(idOrSlug);
+  if (!row?.file_content_base64) throw new LawBookError('File not found', 404);
+  if (publicOnly && row.status !== 'published') throw new LawBookError('File not found', 404);
+  return {
+    fileName: row.file_name || `${row.slug}.pdf`,
+    mimeType: row.file_mime || 'application/pdf',
+    buffer: Buffer.from(row.file_content_base64, 'base64'),
+  };
 }
 
 export async function deleteLawBook(idOrSlug, { hard = false } = {}) {
