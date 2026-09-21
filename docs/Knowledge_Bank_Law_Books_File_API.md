@@ -3,11 +3,24 @@
 **Document ID:** NL-FE-KB-BOOKS-FILE-001  
 **Backend ticket:** NL-BE-KB-BOOKS-FILE-001  
 **Source brief:** `NL_Knowledge_Bank_Law_Books_File_API_Guidance.pdf`  
-**Version:** 1.0  
-**Updated:** 21 September 2026  
+**Version:** 1.1  
+**Updated:** 22 September 2026  
 **Base:** `https://nexus-lexis-backend-ql8w.vercel.app/api/v2`
 
 Delta on top of Law Books CRUD (`NL-BE-KB-DYN-001`). Adds **PDF / DOCX volume file** upload, replace, delete, and public stream.
+
+---
+
+## Status (confirmed live)
+
+**Yes — Law Books volumes are added as PDF *or* DOCX.** Both types are accepted on create/update and on dedicated file upload. One volume file per book. Other types → `400`.
+
+| Type | Extension | MIME stored |
+|------|-----------|-------------|
+| PDF | `.pdf` | `application/pdf` |
+| DOCX | `.docx` | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` |
+
+Max **25 MB**. Form field name: **`file`**.
 
 ---
 
@@ -18,7 +31,7 @@ Delta on top of Law Books CRUD (`NL-BE-KB-DYN-001`). Adds **PDF / DOCX volume fi
 | Create/update book | JSON only | **multipart** metadata + optional `file` |
 | Publish rule | title + description | title + description + **hasFile** |
 | Dedicated file routes | Missing | POST / DELETE / GET admin + GET public |
-| Allowed types | — | `application/pdf` or DOCX, **max 25 MB** |
+| Allowed types | — | **PDF or DOCX**, **max 25 MB** (both live) |
 | Delete file | — | Clears file and forces `status=draft` |
 
 ---
@@ -51,10 +64,14 @@ Public `GET …/file`: **no auth**.
 
 | Rule | Value |
 |------|-------|
-| MIME / extension | `application/pdf` (`.pdf`) **or** DOCX (`.docx` / openxml) |
+| Accepted | **PDF and DOCX only** (either one) |
+| MIME / extension | `application/pdf` (`.pdf`) **or** `application/vnd.openxmlformats-officedocument.wordprocessingml.document` (`.docx`) |
 | Max size | **25 MB** (26214400 bytes) |
 | Form field name | **`file`** |
 | Optional | `fileName` string |
+| Reject | Any other type / oversize → `400` (`fields.file: invalid_type` / `too_large`) |
+
+Detection uses MIME, extension, and magic bytes (`%PDF` / ZIP+`.docx`).
 
 ---
 
@@ -196,8 +213,8 @@ Sample chapter text remains optional teaser — **uploaded file is the full volu
 - [x] Publish without file rejected (`400`)  
 - [x] Replace via `POST …/file`  
 - [x] DELETE file → draft; publish blocked until re-upload  
-- [x] PDF and DOCX within 25 MB  
+- [x] PDF **and** DOCX within 25 MB (both accepted)  
 
 ---
 
-*NL-FE-KB-BOOKS-FILE-001 · Volume file contract for Frontend*
+*NL-FE-KB-BOOKS-FILE-001 v1.1 · Volume file contract for Frontend — PDF or DOCX*

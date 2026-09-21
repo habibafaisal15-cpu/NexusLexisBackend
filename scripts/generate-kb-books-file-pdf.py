@@ -106,10 +106,10 @@ def cover(c, doc):
     c.setFont(BOLD, 15)
     c.drawString(ML, PAGE_H - 52 * mm, "Law Books — Volume File APIs")
     c.setFont(BODY, 10)
-    c.drawString(ML, PAGE_H - 62 * mm, "PDF / DOCX upload · headers · endpoints · responses")
+    c.drawString(ML, PAGE_H - 62 * mm, "PDF or DOCX volume · both types live · headers · endpoints")
     c.setFillColor(HexColor("#B7C3D4"))
     c.setFont(BODY, 8)
-    c.drawString(ML, PAGE_H - 76 * mm, "NL-FE-KB-BOOKS-FILE-001  v1.0  ·  21 September 2026")
+    c.drawString(ML, PAGE_H - 76 * mm, "NL-FE-KB-BOOKS-FILE-001  v1.1  ·  22 September 2026")
     c.drawString(ML, PAGE_H - 84 * mm, "Base: https://nexus-lexis-backend-ql8w.vercel.app/api/v2")
     c.restoreState()
 
@@ -129,12 +129,17 @@ def build():
     u = PAGE_W - ML - MR
     story = [Spacer(1, 95 * mm), PageBreak()]
 
-    story.append(Paragraph("0. Delta", S["H1"]))
+    story.append(Paragraph("0. Status — PDF or DOCX?", S["H1"]))
     story.append(Paragraph(
-        "Extends Law Books CRUD: one PDF or DOCX volume per book (max 25 MB). "
-        "Publish requires hasFile. Public Open/Download uses file.url.",
+        "<b>Yes — both.</b> Law Books volumes are uploaded as <b>PDF or DOCX</b> "
+        "(one file per book). Both types are live on create/update and POST …/file. "
+        "Other types → 400. Publish requires hasFile. Public Open/Download uses file.url.",
         S["B"],
     ))
+    story.append(tbl(["Type", "Extension", "MIME stored"], [
+        ["PDF", ".pdf", "application/pdf"],
+        ["DOCX", ".docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+    ], [28 * mm, 28 * mm, u - 56 * mm]))
     story.append(tbl(["Header", "On", "Value"], [
         ["Authorization", "Admin", "Bearer &lt;JWT&gt;"],
         ["X-Client-Role", "Admin", "Admin"],
@@ -142,9 +147,10 @@ def build():
         ["Content-Type", "create/update/file", "multipart/form-data"],
     ], [32 * mm, 32 * mm, u - 64 * mm]))
     story.append(tbl(["Rule", "Value"], [
-        ["Types", "application/pdf (.pdf) or DOCX (.docx)"],
-        ["Max size", "25 MB"],
+        ["Accepted", "PDF and DOCX only (either one)"],
+        ["Max size", "25 MB (26214400 bytes)"],
         ["Field name", "file (+ optional fileName)"],
+        ["Reject", "wrong type / oversize → 400"],
         ["Publish", "title + description + hasFile required"],
     ], [28 * mm, u - 28 * mm]))
     story.append(PageBreak())
