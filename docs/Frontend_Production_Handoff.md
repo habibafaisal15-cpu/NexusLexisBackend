@@ -244,10 +244,18 @@ Use these for QA until real signup flows are verified end-to-end.
 
 Production APIs currently allow all origins (`CORS_ALLOW_ALL=true`) for initial integration.
 
-**When the frontend is deployed**, send the production frontend URL (e.g. `https://your-app.vercel.app`) to the backend team so we can:
+**Live frontend:** [https://nexuslexis.netlify.app/](https://nexuslexis.netlify.app/)
 
-1. Add it to `FRONTEND_URLS` on both Vercel projects
-2. Add it to Google OAuth **Authorized JavaScript origins**
+Backend defaults / production examples now include:
+- `FRONTEND_URL=https://nexuslexis.netlify.app` (Google OAuth redirect → `/login?token=…`)
+- `FRONTEND_URLS=https://nexuslexis.netlify.app,https://nexuslexis.law`
+
+Still required on Google Cloud Console: add `https://nexuslexis.netlify.app` under **Authorized JavaScript origins**.
+
+When locking CORS later:
+
+1. Keep Netlify (+ `nexuslexis.law`) in `FRONTEND_URLS` on both Vercel projects
+2. Confirm Google OAuth **Authorized JavaScript origins**
 3. Disable open CORS (`CORS_ALLOW_ALL=false`)
 
 ---

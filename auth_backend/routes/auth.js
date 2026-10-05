@@ -240,7 +240,12 @@ router.get('/google/callback', asyncHandler(async (req, res) => {
   const roleFromState = parseGoogleRoleFromState(state);
   const result = await exchangeGoogleAuthCode(String(code), roleFromState);
   const session = await buildAuthSession(result.authUser, result.dashboardUser);
-  const frontend = (process.env.FRONTEND_URL || 'http://localhost:5175').trim();
+  const PRODUCTION_FRONTEND = 'https://nexuslexis.netlify.app';
+  const frontend = (
+    process.env.NODE_ENV === 'production'
+      ? PRODUCTION_FRONTEND
+      : (process.env.FRONTEND_URL || 'http://localhost:5175')
+  ).trim().replace(/\/$/, '');
   const redirectUrl = new URL('/login', frontend);
   redirectUrl.searchParams.set('token', session.accessToken);
   redirectUrl.searchParams.set('refreshToken', session.refreshToken);

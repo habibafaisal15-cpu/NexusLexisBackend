@@ -85,7 +85,7 @@ Frontend stores tokens -> redirect to dashboard
 ## 3.2 Frontend setup (Google Cloud Console)
 
 1. Create OAuth 2.0 **Web client** in [Google Cloud Console](https://console.cloud.google.com/)
-2. **Authorized JavaScript origins:** your frontend URL (e.g. `https://nexuslexis.law`, `http://localhost:5173`)
+2. **Authorized JavaScript origins:** your frontend URL (e.g. `https://nexuslexis.netlify.app`, `https://nexuslexis.law`, `http://localhost:5173`)
 3. **Authorized redirect URIs:** Auth callback (only if using redirect flow):
    `https://nexus-lexis-backend-45v4.vercel.app/api/auth/google/callback`
 4. Copy **Client ID** into frontend Google GIS config
