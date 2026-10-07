@@ -17,7 +17,7 @@ const PORT = process.env.PORT || 3001;
 const app = express();
 
 const allowAllOrigins = process.env.CORS_ALLOW_ALL === 'true';
-const allowedOrigins = (process.env.FRONTEND_URLS || process.env.FRONTEND_URL || 'https://nexuslexis.netlify.app,http://localhost:5175,http://localhost:5173')
+const allowedOrigins = (process.env.FRONTEND_URLS || process.env.FRONTEND_URL || 'https://nexuslexis.netlify.app,https://nexuslexis.law,http://localhost:5175,http://localhost:5173')
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean);

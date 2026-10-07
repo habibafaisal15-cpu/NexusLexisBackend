@@ -120,7 +120,7 @@ app.get('/', (_req, res) => {
   });
 });
 
-const corsOrigins = (process.env.FRONTEND_URLS || 'https://nexuslexis.netlify.app,http://localhost:5175,http://localhost:5173')
+const corsOrigins = (process.env.FRONTEND_URLS || 'https://nexuslexis.netlify.app,https://nexuslexis.law,http://localhost:5175,http://localhost:5173')
   .split(',')
   .map((o) => o.trim())
   .filter(Boolean);

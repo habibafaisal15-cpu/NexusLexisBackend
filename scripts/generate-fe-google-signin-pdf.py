@@ -109,7 +109,7 @@ def cover(c, doc):
     c.setFillColor(HexColor("#B7C3D4"))
     c.setFont(BODY, 8)
     c.drawString(ML, PAGE_H - 76 * mm, "NL-FE-GGL-002  ·  5 October 2026")
-    c.drawString(ML, PAGE_H - 84 * mm, "Live FE: https://nexuslexis.netlify.app")
+    c.drawString(ML, PAGE_H - 84 * mm, "Live FE: nexuslexis.netlify.app · nexuslexis.law")
     c.restoreState()
 
 
@@ -154,7 +154,7 @@ Content-Type: application/json
 
     story.append(Paragraph("4. Errors", S["H1"]))
     story.append(tbl(["Error", "Fix"], [
-        ["origin_mismatch", "Add https://nexuslexis.netlify.app to Google JS origins (no /)"],
+        ["origin_mismatch", "Add https://nexuslexis.netlify.app AND https://nexuslexis.law to Google JS origins (no /)"],
         ["API fail after Google popup", "FE still on old Client ID — update env + redeploy"],
         ["Google sign-in is not configured", "Auth Vercel missing GOOGLE_CLIENT_ID"],
     ], [50 * mm, u - 50 * mm]))

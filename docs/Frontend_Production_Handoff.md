@@ -250,7 +250,9 @@ Backend defaults / production examples now include:
 - `FRONTEND_URL=https://nexuslexis.netlify.app` (Google OAuth redirect → `/login?token=…`)
 - `FRONTEND_URLS=https://nexuslexis.netlify.app,https://nexuslexis.law`
 
-Still required on Google Cloud Console: add `https://nexuslexis.netlify.app` under **Authorized JavaScript origins**.
+Still required on Google Cloud Console — **Authorized JavaScript origins** (no trailing `/`):
+- `https://nexuslexis.netlify.app`
+- `https://nexuslexis.law`
 
 When locking CORS later:
 

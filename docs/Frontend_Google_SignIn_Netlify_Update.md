@@ -3,10 +3,10 @@
 **Document ID:** NL-FE-GGL-002  
 **Date:** 5 October 2026  
 **Audience:** Frontend team  
-**Live frontend:** https://nexuslexis.netlify.app  
+**Live frontends:** https://nexuslexis.netlify.app · https://nexuslexis.law  
 **Auth API:** https://nexus-lexis-backend-45v4.vercel.app/api/auth  
 
-Backend Google OAuth credentials were **rotated** (new Google Cloud project). Frontend must use the **new Client ID** and redeploy Netlify. Backend Auth API is already updated.
+Backend Google OAuth credentials were **rotated** (new Google Cloud project). Frontend must use the **new Client ID** and redeploy. Backend Auth API is already updated.
 
 ---
 
@@ -15,7 +15,7 @@ Backend Google OAuth credentials were **rotated** (new Google Cloud project). Fr
 | Item | Status |
 |------|--------|
 | New Google Cloud OAuth Web client | Done |
-| Authorized JS origin `https://nexuslexis.netlify.app` | Done (must be set in Google Console) |
+| Authorized JS origins (Netlify + custom domain) | Add both in Google Console (see §4) |
 | Auth Vercel `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Done — redeploy Auth if not already |
 | Google redirect callback | `https://nexus-lexis-backend-45v4.vercel.app/api/auth/google/callback` |
 
@@ -87,7 +87,7 @@ Content-Type: application/json
 
 | Symptom | Cause | Fix |
 |---------|--------|-----|
-| `Error 400: origin_mismatch` | Netlify origin missing in Google Console | Add `https://nexuslexis.netlify.app` (no trailing `/`) under Authorized JavaScript origins |
+| `Error 400: origin_mismatch` | Site origin missing in Google Console | Add `https://nexuslexis.netlify.app` **and** `https://nexuslexis.law` (no trailing `/`) under Authorized JavaScript origins |
 | Google popup works but API 401/400 | FE still on **old** Client ID | Update `VITE_GOOGLE_CLIENT_ID` + redeploy |
 | `Google sign-in is not configured` | Auth missing `GOOGLE_CLIENT_ID` | Backend / Vercel Auth env |
 
@@ -100,6 +100,7 @@ For the OAuth **Web client** tied to the new Client ID:
 **Authorized JavaScript origins**
 ```
 https://nexuslexis.netlify.app
+https://nexuslexis.law
 http://localhost:5173
 ```
 
@@ -117,7 +118,8 @@ Frontend team does **not** need Client Secret. Secret stays on Auth Vercel only.
 
 - [ ] Netlify env has **new** `VITE_GOOGLE_CLIENT_ID`
 - [ ] Netlify **Redeploy** completed after env change
-- [ ] On https://nexuslexis.netlify.app/login — Continue with Google opens without `origin_mismatch`
+- [ ] On https://nexuslexis.netlify.app/login — Continue with Google works (no `origin_mismatch`)
+- [ ] On https://nexuslexis.law/login — Continue with Google works (no `origin_mismatch`)
 - [ ] After Google account pick — tokens returned; user lands in app
 - [ ] Localhost test (optional): origin `http://localhost:5173` + local `VITE_GOOGLE_CLIENT_ID`
 
