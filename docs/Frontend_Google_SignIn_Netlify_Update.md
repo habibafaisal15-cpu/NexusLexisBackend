@@ -48,7 +48,7 @@ Local `.env` / `.env.production` in the FE repo: same `VITE_GOOGLE_CLIENT_ID`.
 
 **Usually none**, if Google GIS / `@react-oauth/google` already posts the credential to Auth API.
 
-Expected flow:
+Expected flow (GIS button — preferred):
 
 ```
 User clicks Continue with Google
@@ -60,6 +60,14 @@ User clicks Continue with Google
   → store accessToken + refreshToken
   → redirect to dashboard
 ```
+
+If using **redirect** flow (`GET /google/url` → callback), pass the current site in `state` so users on `nexuslexis.law` are not sent to Netlify:
+
+```
+state = {"role":"client","returnTo":"https://nexuslexis.law"}
+```
+
+or `signup:client|https://nexuslexis.law`
 
 ### Request
 

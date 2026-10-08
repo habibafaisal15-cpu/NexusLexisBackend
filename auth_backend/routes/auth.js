@@ -24,6 +24,30 @@ import { isUniqueViolation, friendlyUniqueViolationMessage } from '../../shared/
 
 const router = Router();
 
+const DEFAULT_PRODUCTION_FRONTENDS = [
+  'https://nexuslexis.netlify.app',
+  'https://nexuslexis.law',
+];
+
+function allowedFrontendOrigins() {
+  const fromEnv = String(process.env.FRONTEND_URLS || process.env.FRONTEND_URL || '')
+    .split(',')
+    .map((o) => o.trim().replace(/\/$/, ''))
+    .filter(Boolean);
+  return new Set([...DEFAULT_PRODUCTION_FRONTENDS, ...fromEnv]);
+}
+
+function normalizeFrontendOrigin(raw) {
+  if (!raw) return null;
+  try {
+    const url = new URL(String(raw).trim());
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
 function parseGoogleRoleFromState(state) {
   const raw = String(state || '').trim();
   if (!raw) return 'client';
@@ -35,13 +59,45 @@ function parseGoogleRoleFromState(state) {
 
   try {
     const parsed = JSON.parse(raw);
-    const role = String(parsed?.role || '').toLowerCase();
+    const role = String(parsed?.role || parsed?.defaultRole || '').toLowerCase();
     if (['client', 'lawyer', 'ca'].includes(role)) return role;
   } catch {
     // state is not JSON — fall through
   }
 
   return 'client';
+}
+
+/** Prefer FE origin from state/query so nexuslexis.law is not forced to Netlify. */
+function resolveGoogleFrontendRedirect(req, state) {
+  const allowed = allowedFrontendOrigins();
+  const candidates = [];
+
+  const rawState = String(state || '').trim();
+  try {
+    const parsed = JSON.parse(rawState);
+    candidates.push(parsed?.returnTo, parsed?.frontend, parsed?.origin);
+  } catch {
+    // ignore
+  }
+
+  if (rawState.includes('|')) {
+    // e.g. signup:client|https://nexuslexis.law
+    const maybeUrl = rawState.split('|')[1];
+    candidates.push(maybeUrl);
+  }
+
+  candidates.push(req.query?.returnTo, req.query?.frontend, req.get('referer'));
+
+  for (const candidate of candidates) {
+    const origin = normalizeFrontendOrigin(candidate);
+    if (origin && allowed.has(origin)) return origin;
+  }
+
+  if (process.env.NODE_ENV === 'production') {
+    return process.env.FRONTEND_URL?.trim().replace(/\/$/, '') || DEFAULT_PRODUCTION_FRONTENDS[0];
+  }
+  return (process.env.FRONTEND_URL || 'http://localhost:5175').trim().replace(/\/$/, '');
 }
 
 async function sendAuthSuccess(res, result, status = 200) {
@@ -232,25 +288,35 @@ router.get('/google/url', asyncHandler(async (req, res) => {
 }));
 
 router.get('/google/callback', asyncHandler(async (req, res) => {
-  const { code, state } = req.query;
+  const { code, state, error: oauthError, error_description: oauthErrorDescription } = req.query;
+  const frontend = resolveGoogleFrontendRedirect(req, state);
+  const redirectWithError = (message) => {
+    const redirectUrl = new URL('/login', frontend);
+    redirectUrl.searchParams.set('googleError', message);
+    redirectUrl.searchParams.set('state', String(state || 'login'));
+    return res.redirect(redirectUrl.toString());
+  };
+
+  if (oauthError) {
+    return redirectWithError(String(oauthErrorDescription || oauthError));
+  }
   if (!code) {
-    return res.status(400).json({ error: 'Missing Google authorization code' });
+    return redirectWithError('Missing Google authorization code');
   }
 
-  const roleFromState = parseGoogleRoleFromState(state);
-  const result = await exchangeGoogleAuthCode(String(code), roleFromState);
-  const session = await buildAuthSession(result.authUser, result.dashboardUser);
-  const PRODUCTION_FRONTEND = 'https://nexuslexis.netlify.app';
-  const frontend = (
-    process.env.NODE_ENV === 'production'
-      ? PRODUCTION_FRONTEND
-      : (process.env.FRONTEND_URL || 'http://localhost:5175')
-  ).trim().replace(/\/$/, '');
-  const redirectUrl = new URL('/login', frontend);
-  redirectUrl.searchParams.set('token', session.accessToken);
-  redirectUrl.searchParams.set('refreshToken', session.refreshToken);
-  redirectUrl.searchParams.set('state', String(state || 'login'));
-  res.redirect(redirectUrl.toString());
+  try {
+    const roleFromState = parseGoogleRoleFromState(state);
+    const result = await exchangeGoogleAuthCode(String(code), roleFromState);
+    const session = await buildAuthSession(result.authUser, result.dashboardUser);
+    const redirectUrl = new URL('/login', frontend);
+    redirectUrl.searchParams.set('token', session.accessToken);
+    redirectUrl.searchParams.set('refreshToken', session.refreshToken);
+    redirectUrl.searchParams.set('state', String(state || 'login'));
+    return res.redirect(redirectUrl.toString());
+  } catch (err) {
+    console.error('[google/callback]', err.message);
+    return redirectWithError(err.message || 'Google sign-in failed');
+  }
 }));
 
 router.post('/google/token', asyncHandler(async (req, res) => {

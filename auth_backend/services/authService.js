@@ -121,13 +121,14 @@ export async function loginUser({ email, password }) {
 }
 
 export async function loginWithGoogleIdToken(idToken, defaultRole = 'client') {
-  if (!process.env.GOOGLE_CLIENT_ID) {
+  const clientId = process.env.GOOGLE_CLIENT_ID?.trim();
+  if (!clientId) {
     throw new Error('Google sign-in is not configured on the server');
   }
 
   const ticket = await googleClient.verifyIdToken({
     idToken,
-    audience: process.env.GOOGLE_CLIENT_ID
+    audience: clientId,
   });
 
   const payload = ticket.getPayload();
@@ -144,10 +145,14 @@ export async function loginWithGoogleIdToken(idToken, defaultRole = 'client') {
 }
 
 export async function exchangeGoogleAuthCode(code, defaultRole = 'client') {
+  const clientId = process.env.GOOGLE_CLIENT_ID?.trim();
   const { tokens } = await googleClient.getToken(code);
+  if (!tokens?.id_token) {
+    throw new Error('Google did not return an ID token');
+  }
   const ticket = await googleClient.verifyIdToken({
     idToken: tokens.id_token,
-    audience: process.env.GOOGLE_CLIENT_ID
+    audience: clientId,
   });
 
   const payload = ticket.getPayload();
