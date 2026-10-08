@@ -162,7 +162,8 @@ export async function resetPasswordWithToken({ email, resetToken, password }) {
     throw new Error('Password reset expired. Please request a new code.');
   }
 
-  const passwordHash = await bcrypt.hash(newPassword, 10);
+  const bcryptRounds = Number(process.env.BCRYPT_ROUNDS) || (process.env.VERCEL ? 8 : 10);
+  const passwordHash = await bcrypt.hash(newPassword, bcryptRounds);
   await query(
     `UPDATE auth_users SET password_hash = $1 WHERE id = $2`,
     [passwordHash, user.id]

@@ -68,7 +68,9 @@ export async function registerUser({ fullName, email, password, phone, role = 'c
     throw new Error('An account with this email already exists');
   }
 
-  const passwordHash = await bcrypt.hash(password, 10);
+  // bcryptjs is pure JS — cost 10 is too slow on Vercel serverless (~several seconds).
+  const bcryptRounds = Number(process.env.BCRYPT_ROUNDS) || (process.env.VERCEL ? 8 : 10);
+  const passwordHash = await bcrypt.hash(password, bcryptRounds);
   const db = await pool.connect();
 
   try {
@@ -85,7 +87,7 @@ export async function registerUser({ fullName, email, password, phone, role = 'c
     const dashboardUser = await syncToDashboardUser(authUser, passwordHash, db);
 
     await db.query('COMMIT');
-    await notifyNewUser({ email: normalizedEmail, role, source: 'register' });
+    void notifyNewUser({ email: normalizedEmail, role, source: 'register' });
     return { authUser, dashboardUser };
   } catch (err) {
     await db.query('ROLLBACK');
@@ -190,7 +192,7 @@ async function upsertGoogleUser({ googleId, email, fullName, defaultRole }, allo
       await touchLastLogin(user.id);
       const dashboardUser = await syncToDashboardUser(user, null, db);
       await db.query('COMMIT');
-      await notifyNewUser({ email, role: defaultRole, source: 'google' });
+      void notifyNewUser({ email, role: defaultRole, source: 'google' });
       return { authUser: user, dashboardUser };
     } catch (err) {
       await db.query('ROLLBACK');
