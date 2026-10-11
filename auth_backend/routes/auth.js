@@ -288,6 +288,28 @@ router.get('/ping', (_req, res) => {
   res.json({ ok: true, service: 'auth', time: new Date().toISOString() });
 });
 
+/**
+ * Full-page Google start (no XHR / no CORS).
+ * FE should use: window.location.href = `${AUTH}/google/start?role=client&returnTo=${origin}`
+ * Fixes browser FETCH_ERROR on popup + POST /google/token.
+ */
+router.get('/google/start', asyncHandler(async (req, res) => {
+  const roleRaw = String(req.query.role || 'client').toLowerCase();
+  const role = ['client', 'lawyer', 'ca'].includes(roleRaw) ? roleRaw : 'client';
+  const allowed = allowedFrontendOrigins();
+  const fromQuery = normalizeFrontendOrigin(req.query.returnTo);
+  const fromReferer = normalizeFrontendOrigin(req.get('referer'));
+  const returnTo = (fromQuery && allowed.has(fromQuery))
+    ? fromQuery
+    : (fromReferer && allowed.has(fromReferer))
+      ? fromReferer
+      : 'https://nexuslexis.law';
+
+  const state = JSON.stringify({ role, returnTo });
+  const url = getGoogleAuthUrl(state);
+  res.redirect(url);
+}));
+
 router.get('/google/url', asyncHandler(async (req, res) => {
   const url = getGoogleAuthUrl(req.query.state || 'login');
   res.json({ url });

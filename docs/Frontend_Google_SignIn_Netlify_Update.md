@@ -48,26 +48,54 @@ Local `.env` / `.env.production` in the FE repo: same `VITE_GOOGLE_CLIENT_ID`.
 
 **Usually none**, if Google GIS / `@react-oauth/google` already posts the credential to Auth API.
 
-Expected flow (GIS button — preferred):
+## Preferred flow (use this — fixes `Unable to reach the server`)
+
+`nexuslexis.law` is on **Hostinger**. Popup GIS + `POST /google/token` often dies with RTK `FETCH_ERROR`. Use **full-page redirect** instead (no XHR):
+
+```js
+// Continue with Google button onClick:
+const role = 'client'; // or lawyer | ca
+const returnTo = window.location.origin; // https://nexuslexis.law
+window.location.href =
+  `https://nexus-lexis-backend-45v4.vercel.app/api/auth/google/start` +
+  `?role=${encodeURIComponent(role)}` +
+  `&returnTo=${encodeURIComponent(returnTo)}`;
+```
+
+Backend then:
+1. Redirects to Google
+2. Google → Auth `/google/callback`
+3. Auth → `{returnTo}/login?token=...&refreshToken=...&state=...`
+
+### On `/login` (and `/signup` if needed) — read tokens from URL
+
+```js
+useEffect(() => {
+  const q = new URLSearchParams(window.location.search);
+  const token = q.get('token');
+  const refreshToken = q.get('refreshToken');
+  const googleError = q.get('googleError');
+  if (googleError) {
+    setError(googleError);
+    return;
+  }
+  if (token) {
+    // store accessToken + refreshToken (same as password login success)
+    // then navigate to dashboard and strip query params
+  }
+}, []);
+```
+
+### Legacy GIS popup flow (optional fallback only)
 
 ```
 User clicks Continue with Google
-  → Google Identity Services (popup / button)
-  → receive credential (ID token)
-  → POST {VITE_AUTH_API_URL}/google/token
-       body: { "idToken": "<credential>", "role": "client" }
-       (or "credential" instead of "idToken"; role: client | lawyer | ca)
-  → store accessToken + refreshToken
-  → redirect to dashboard
+  → Google Identity Services popup
+  → POST {VITE_AUTH_API_URL}/google/token  { idToken | credential, role }
+  → store tokens
 ```
 
-If using **redirect** flow (`GET /google/url` → callback), pass the current site in `state` so users on `nexuslexis.law` are not sent to Netlify:
-
-```
-state = {"role":"client","returnTo":"https://nexuslexis.law"}
-```
-
-or `signup:client|https://nexuslexis.law`
+If this shows **Unable to reach the server**, switch to `/google/start` redirect above.
 
 ### Request
 

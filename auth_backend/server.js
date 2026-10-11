@@ -65,6 +65,7 @@ app.get('/', (_req, res) => {
       profileCA: 'POST /api/auth/profile/ca/apply',
       uploadVerificationDoc: 'POST /api/auth/profile/documents/upload',
       viewVerificationDoc: 'GET /api/auth/documents/:documentId',
+      googleStart: 'GET /api/auth/google/start',
       googleUrl: 'GET /api/auth/google/url',
       googleToken: 'POST /api/auth/google/token'
     }
