@@ -98,6 +98,49 @@ Content-Type: application/json
 | `Error 400: origin_mismatch` | Site origin missing in Google Console | Add `https://nexuslexis.netlify.app` **and** `https://nexuslexis.law` (no trailing `/`) under Authorized JavaScript origins |
 | Google popup works but API 401/400 | FE still on **old** Client ID | Update `VITE_GOOGLE_CLIENT_ID` + redeploy |
 | `Google sign-in is not configured` | Auth missing `GOOGLE_CLIENT_ID` | Backend / Vercel Auth env |
+| **`Unable to reach the server. Check your connection…`** | RTK `FETCH_ERROR` — browser never got Auth response (cold start / aborted fetch / blocked) | See **§7** below |
+
+---
+
+## 7. Fix: `Unable to reach the server` on Google Sign-In
+
+Backend Auth is up (`/api/health` → `db: ok`). This message is **frontend network**, not a bad password.
+
+### 7.1 Warm Auth before Google click (quick)
+
+On Login / SignUp mount:
+
+```js
+useEffect(() => {
+  fetch('https://nexus-lexis-backend-45v4.vercel.app/api/health').catch(() => {});
+  fetch('https://nexus-lexis-backend-45v4.vercel.app/api/auth/ping').catch(() => {});
+}, []);
+```
+
+### 7.2 Recommended: same-origin proxy (kills CORS FETCH_ERROR)
+
+**Netlify** `public/_redirects` or `netlify.toml`:
+
+```
+/api/auth/*  https://nexus-lexis-backend-45v4.vercel.app/api/auth/:splat  200
+```
+
+Then build with:
+
+```env
+VITE_AUTH_API_URL=/api/auth
+```
+
+Browser calls `https://nexuslexis.law/api/auth/google/token` (same origin) → Netlify proxies to Auth. More reliable than cross-origin to `vercel.app`.
+
+### 7.3 DevTools check
+
+1. Incognito (extensions off) → https://nexuslexis.law/login  
+2. F12 → **Network** → Continue with Google  
+3. Find `google/token`  
+   - **(canceled) / failed** → warm-up (§7.1) or proxy (§7.2)  
+   - **400/401 with JSON** → share response body with backend  
+   - **missing entirely** → Google callback never fired (Client ID / GIS)
 
 ---
 

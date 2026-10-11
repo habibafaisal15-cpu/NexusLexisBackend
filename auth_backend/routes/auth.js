@@ -27,6 +27,7 @@ const router = Router();
 const DEFAULT_PRODUCTION_FRONTENDS = [
   'https://nexuslexis.netlify.app',
   'https://nexuslexis.law',
+  'https://www.nexuslexis.law',
 ];
 
 function allowedFrontendOrigins() {
@@ -280,6 +281,11 @@ router.get('/roles', (_req, res) => {
     registerRoles: ['client', 'lawyer', 'ca'],
     allRoles: ALL_ROLES
   });
+});
+
+/** Ultra-light ping for FE warm-up (no DB). */
+router.get('/ping', (_req, res) => {
+  res.json({ ok: true, service: 'auth', time: new Date().toISOString() });
 });
 
 router.get('/google/url', asyncHandler(async (req, res) => {
