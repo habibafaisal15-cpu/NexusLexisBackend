@@ -20,8 +20,10 @@ function buildPoolConfig(maxConnections = 10) {
   }
 
   if (process.env.VERCEL) {
-    config.connectionTimeoutMillis = Number(process.env.DB_CONNECT_TIMEOUT_MS || 10000);
-    config.idleTimeoutMillis = 10000;
+    // Neon cold starts on serverless can exceed the old 10s default.
+    config.connectionTimeoutMillis = Number(process.env.DB_CONNECT_TIMEOUT_MS || 20000);
+    config.idleTimeoutMillis = Number(process.env.DB_IDLE_TIMEOUT_MS || 5000);
+    config.allowExitOnIdle = true;
   }
 
   return config;
@@ -29,8 +31,27 @@ function buildPoolConfig(maxConnections = 10) {
 
 export const pool = new Pool(buildPoolConfig(process.env.VERCEL ? 1 : 10));
 
+function isTransientDbError(err) {
+  const msg = String(err?.message || '').toLowerCase();
+  return (
+    msg.includes('timeout exceeded when trying to connect')
+    || msg.includes('connection terminated')
+    || msg.includes('cannot connect')
+    || err?.code === 'ETIMEDOUT'
+    || err?.code === 'ECONNRESET'
+    || err?.code === 'ECONNREFUSED'
+  );
+}
+
 export async function query(text, params) {
-  return pool.query(text, params);
+  try {
+    return await pool.query(text, params);
+  } catch (err) {
+    if (!process.env.VERCEL || !isTransientDbError(err)) throw err;
+    // One retry after a brief pause — common on Neon cold pooler.
+    await new Promise((r) => setTimeout(r, 250));
+    return pool.query(text, params);
+  }
 }
 
 export async function testConnection() {

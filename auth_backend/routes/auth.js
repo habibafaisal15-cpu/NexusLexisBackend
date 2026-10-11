@@ -336,9 +336,17 @@ router.use((err, _req, res, _next) => {
     return res.status(409).json({ error: friendlyUniqueViolationMessage(err) });
   }
 
-  const message = err.message || 'Authentication request failed';
-  const status = message.includes('not configured') ? 503 : 400;
-  res.status(status).json({ error: message });
+  const raw = err.message || 'Authentication request failed';
+  const isDbTimeout = /timeout exceeded when trying to connect|ECONNRESET|ETIMEDOUT|connection terminated/i.test(raw);
+  if (isDbTimeout) {
+    return res.status(503).json({
+      error: 'Server is warming up. Please try again in a moment.',
+      code: 'DB_CONNECT_TIMEOUT',
+    });
+  }
+
+  const status = raw.includes('not configured') ? 503 : 400;
+  res.status(status).json({ error: raw });
 });
 
 export default router;
