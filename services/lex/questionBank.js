@@ -111,21 +111,26 @@ async function ensureTfidfIndex(apiKey) {
   const sheetUrl = process.env.LEX_QUESTION_BANK_URL || DEFAULT_QUESTION_BANK_URL;
   cache.sheetBuilding = (async () => {
     const started = Date.now();
-    const entries = await downloadSheetEntries(sheetUrl);
-    cache.entries = entries;
-    cache.tfidf = buildTfidfIndex(entries);
-    cache.loadedAt = Date.now();
-    console.log(`[lex] Question bank loaded (${entries.length} rows, TF-IDF) in ${Date.now() - started}ms`);
-    startEmbeddingBuild(entries, apiKey);
-    return cache;
-  })()
-    .catch((err) => {
+    try {
+      const entries = await downloadSheetEntries(sheetUrl);
+      cache.entries = entries;
+      cache.tfidf = buildTfidfIndex(entries);
+      cache.loadedAt = Date.now();
+      console.log(`[lex] Question bank loaded (${entries.length} rows, TF-IDF) in ${Date.now() - started}ms`);
+      startEmbeddingBuild(entries, apiKey);
+      return cache;
+    } catch (err) {
       console.error('[lex] Question bank load error:', err.message);
+      // Serve stale cache if present so Gemini chat can still run.
+      if (cache.entries.length && cache.tfidf) {
+        console.warn('[lex] Using stale question-bank cache after load failure');
+        return cache;
+      }
       throw err;
-    })
-    .finally(() => {
-      cache.sheetBuilding = null;
-    });
+    }
+  })().finally(() => {
+    cache.sheetBuilding = null;
+  });
 
   return cache.sheetBuilding;
 }

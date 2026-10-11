@@ -1031,7 +1031,7 @@ app.delete('/api/v1/lex/sessions/:sessionKey/', optionalAuthMiddleware, asyncHan
   }
 }));
 
-app.post('/api/v1/lex/chat/', optionalAuthMiddleware, asyncHandler(async (req, res) => {
+async function handleLexChat(req, res) {
   try {
     const userId = req.user?.userId || req.user?.sub || null;
     const ownerKey = lexOwnerFromReq(req);
@@ -1060,7 +1060,21 @@ app.post('/api/v1/lex/chat/', optionalAuthMiddleware, asyncHandler(async (req, r
     }
     return res.status(err.status || 400).json({ error: err.message, ...(err.extra || {}) });
   }
-}));
+}
+
+app.post('/api/v1/lex/chat', optionalAuthMiddleware, asyncHandler(handleLexChat));
+app.post('/api/v1/lex/chat/', optionalAuthMiddleware, asyncHandler(handleLexChat));
+
+app.get('/api/v1/lex/ready', (_req, res) => {
+  const hasKey = Boolean(process.env.GEMINI_API_KEY?.trim());
+  const mode = process.env.LEX_MODE || (hasKey ? 'inline' : 'proxy');
+  res.status(hasKey ? 200 : 503).json({
+    status: hasKey ? 'ready' : 'not_ready',
+    mode,
+    geminiConfigured: hasKey,
+    model: process.env.GEMINI_MODEL || 'gemini-2.0-flash',
+  });
+});
 
 // ─── Health check ───────────────────────────────────────────────────────────
 

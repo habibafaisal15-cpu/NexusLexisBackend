@@ -116,8 +116,15 @@ export async function runLexChat({ message, session_key: sessionKey, owner_key: 
   }
 
   const apiKey = process.env.GEMINI_API_KEY;
-  const model = process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite';
+  const primaryModel = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+  const fallbackModels = String(process.env.GEMINI_MODEL_FALLBACKS || 'gemini-2.0-flash,gemini-1.5-flash,gemini-flash-latest')
+    .split(',')
+    .map((m) => m.trim())
+    .filter(Boolean);
+  const models = [...new Set([primaryModel, ...fallbackModels])];
+
   if (!apiKey) {
+    console.error('[lex-inline] GEMINI_API_KEY missing');
     return finish(buildResponse(unavailableMessage(lang), lang));
   }
 
@@ -132,25 +139,39 @@ export async function runLexChat({ message, session_key: sessionKey, owner_key: 
 
   const genConfig = {
     maxTokens: Number(process.env.LLM_MAX_TOKENS || 500),
-    model,
     apiKey,
     timeoutMs: Number(process.env.LLM_GENERATION_TIMEOUT || 60) * 1000,
   };
 
-  try {
-    // STEP 3 — Sheet search (TF-IDF, instant; embeddings optional in background)
-    const bank = await searchQuestionBank(userMessage, apiKey);
+  async function completeWithFallback(system) {
+    let lastErr;
+    for (const model of models) {
+      try {
+        return await geminiChatCompletion(conversation, { ...genConfig, model, system });
+      } catch (err) {
+        lastErr = err;
+        console.warn(`[lex-inline] Gemini model ${model} failed:`, err.message);
+      }
+    }
+    throw lastErr || new Error('Gemini unavailable');
+  }
 
+  // STEP 3 — Sheet search (isolated: sheet outage must not block Gemini)
+  let bank = { found: false, matches: [], score: 0, method: 'skipped' };
+  try {
+    bank = await searchQuestionBank(userMessage, apiKey);
+  } catch (err) {
+    console.warn('[lex-inline] Question bank skipped:', err.message);
+  }
+
+  try {
     if (bank.found && bank.top) {
       const referenceBlock = formatReferenceContext(bank.matches);
       const system = (
         `${SHEET_GROUNDED_PROMPT}\n\n${referenceBlock}\n\n`
         + `Similarity score: ${bank.score.toFixed(3)}`
       );
-      const aiResponse = await geminiChatCompletion(
-        conversation,
-        { ...genConfig, system }
-      );
+      const aiResponse = await completeWithFallback(system);
       return finish(buildResponse(aiResponse, lang, register, urgencyFlag(userMessage)));
     }
 
@@ -161,10 +182,7 @@ export async function runLexChat({ message, session_key: sessionKey, owner_key: 
       + 'Answer from general Pakistani legal knowledge, note uncertainty where needed, '
       + 'and suggest consulting a verified lawyer for case-specific advice.'
     );
-    const aiResponse = await geminiChatCompletion(
-      conversation,
-      { ...genConfig, system }
-    );
+    const aiResponse = await completeWithFallback(system);
     return finish(buildResponse(aiResponse, lang, register, urgencyFlag(userMessage)));
   } catch (err) {
     console.error('[lex-inline] Pipeline error:', err.message);
