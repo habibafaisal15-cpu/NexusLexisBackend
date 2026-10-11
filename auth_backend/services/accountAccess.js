@@ -3,14 +3,14 @@ import * as repo from '../db/profileRepository.js';
 function lawyerMessages(stat) {
   if (stat === 'verified') return 'Your lawyer account is verified. You can access the dashboard.';
   if (stat === 'pending') return 'Your lawyer application is under review. Dashboard access will unlock after approval.';
-  if (stat === 'rejected') return 'Your lawyer application was rejected. Please resubmit the registration form.';
+  if (stat === 'rejected') return 'Your lawyer application was rejected. You can update your details and apply for verification again.';
   return 'Account created. Complete your lawyer registration form to continue.';
 }
 
 function caMessages(stat) {
   if (stat === 'verified') return 'Your CA account is verified. You can access the dashboard.';
   if (stat === 'pending') return 'Your CA application is under review. Dashboard access will unlock after approval.';
-  if (stat === 'rejected') return 'Your CA application was rejected. Please resubmit the registration form.';
+  if (stat === 'rejected') return 'Your CA application was rejected. You can update your details and apply for verification again.';
   return 'Account created. Complete your CA registration form to continue.';
 }
 
@@ -43,10 +43,13 @@ export async function getAccountAccessMeta(authUser, dashboardUser = null) {
     }
     const verification = repo.mapVerification(profile);
     const canAccess = profile.verification_stat === 'verified';
+    const isRejected = profile.verification_stat === 'rejected';
     return {
       accountRole: 'lawyer',
       verificationStatus: verification.status === 'None' ? 'ApplicationRequired' : verification.status,
       canAccessDashboard: canAccess,
+      canReapply: isRejected,
+      canApplyAsLawyer: isRejected || !profile,
       nextStep: canAccess
         ? 'dashboard'
         : profile.verification_stat === 'pending'
@@ -73,10 +76,13 @@ export async function getAccountAccessMeta(authUser, dashboardUser = null) {
     }
     const verification = repo.mapVerification(profile);
     const canAccess = profile.verification_stat === 'verified';
+    const isRejected = profile.verification_stat === 'rejected';
     return {
       accountRole: 'ca',
       verificationStatus: verification.status === 'None' ? 'ApplicationRequired' : verification.status,
       canAccessDashboard: canAccess,
+      canReapply: isRejected,
+      canApplyAsCA: isRejected || !profile,
       nextStep: canAccess
         ? 'dashboard'
         : profile.verification_stat === 'pending'

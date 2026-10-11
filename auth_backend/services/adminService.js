@@ -134,22 +134,110 @@ export async function getApplicationDetails(userId, type) {
 
 export async function approveApplication(userId, type) {
   if (type === 'lawyer') {
+    const profile = await repo.getLawyerProfile(userId);
+    if (!profile) throw new Error('Lawyer application not found');
+    if (profile.verification_stat !== 'pending') {
+      throw new Error(`Cannot approve lawyer application in status: ${profile.verification_stat}`);
+    }
     await repo.setLawyerVerificationStatus(userId, 'verified');
-  } else if (type === 'ca') {
-    await repo.setCAVerificationStatus(userId, 'verified');
-  } else {
-    throw new Error('Invalid application type');
+    return {
+      success: true,
+      userId,
+      type,
+      status: 'verified',
+      verificationStatus: 'Approved',
+      canReapply: false,
+      nextStep: 'dashboard',
+    };
   }
-  return { success: true, userId, type, status: 'verified' };
+
+  if (type === 'ca') {
+    const profile = await repo.getCAProfile(userId);
+    if (!profile) throw new Error('CA application not found');
+    if (profile.verification_stat !== 'pending') {
+      throw new Error(`Cannot approve CA application in status: ${profile.verification_stat}`);
+    }
+    await repo.setCAVerificationStatus(userId, 'verified');
+    return {
+      success: true,
+      userId,
+      type,
+      status: 'verified',
+      verificationStatus: 'Approved',
+      canReapply: false,
+      nextStep: 'dashboard',
+    };
+  }
+
+  throw new Error('Invalid application type');
 }
 
 export async function rejectApplication(userId, type) {
   if (type === 'lawyer') {
+    const profile = await repo.getLawyerProfile(userId);
+    if (!profile) throw new Error('Lawyer application not found');
+    if (profile.verification_stat === 'rejected') {
+      return {
+        success: true,
+        userId,
+        type,
+        status: 'rejected',
+        verificationStatus: 'Rejected',
+        canReapply: true,
+        canApplyAsLawyer: true,
+        nextStep: 'complete_lawyer_application',
+        message: 'Your lawyer application was rejected. You can update your details and apply for verification again.',
+      };
+    }
+    if (profile.verification_stat !== 'pending') {
+      throw new Error(`Cannot reject lawyer application in status: ${profile.verification_stat}`);
+    }
     await repo.setLawyerVerificationStatus(userId, 'rejected');
-  } else if (type === 'ca') {
-    await repo.setCAVerificationStatus(userId, 'rejected');
-  } else {
-    throw new Error('Invalid application type');
+    return {
+      success: true,
+      userId,
+      type,
+      status: 'rejected',
+      verificationStatus: 'Rejected',
+      canReapply: true,
+      canApplyAsLawyer: true,
+      nextStep: 'complete_lawyer_application',
+      message: 'Your lawyer application was rejected. You can update your details and apply for verification again.',
+    };
   }
-  return { success: true, userId, type, status: 'rejected' };
+
+  if (type === 'ca') {
+    const profile = await repo.getCAProfile(userId);
+    if (!profile) throw new Error('CA application not found');
+    if (profile.verification_stat === 'rejected') {
+      return {
+        success: true,
+        userId,
+        type,
+        status: 'rejected',
+        verificationStatus: 'Rejected',
+        canReapply: true,
+        canApplyAsCA: true,
+        nextStep: 'complete_ca_application',
+        message: 'Your CA application was rejected. You can update your details and apply for verification again.',
+      };
+    }
+    if (profile.verification_stat !== 'pending') {
+      throw new Error(`Cannot reject CA application in status: ${profile.verification_stat}`);
+    }
+    await repo.setCAVerificationStatus(userId, 'rejected');
+    return {
+      success: true,
+      userId,
+      type,
+      status: 'rejected',
+      verificationStatus: 'Rejected',
+      canReapply: true,
+      canApplyAsCA: true,
+      nextStep: 'complete_ca_application',
+      message: 'Your CA application was rejected. You can update your details and apply for verification again.',
+    };
+  }
+
+  throw new Error('Invalid application type');
 }

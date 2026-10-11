@@ -272,6 +272,8 @@ export async function submitLawyerApplication(userId, data) {
 
   }
 
+  // rejected (or no profile) → allow apply / re-apply; status resets to pending below
+
 
 
   const { practiceArea, languages, practiceAreas, cnic, documents } = buildLawyerFields(data, userId, existing);
@@ -487,6 +489,8 @@ export async function submitCAApplication(userId, data) {
     throw new Error('Your CA profile is already verified');
 
   }
+
+  // rejected (or no profile) → allow apply / re-apply; status resets to pending below
 
 
 

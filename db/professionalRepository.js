@@ -305,7 +305,11 @@ export async function getLawyerProfile(userId) {
       consultationFeeOnline: Number(profile.online_fee),
       consultationFeeInPerson: Number(profile.inperson_fee),
       consultationModes: ['Online', 'In-Person'],
-      verificationStatus: profile.verification_stat === 'verified' ? 'Approved' : 'Pending',
+      verificationStatus: profile.verification_stat === 'verified'
+        ? 'Approved'
+        : profile.verification_stat === 'rejected'
+          ? 'Rejected'
+          : 'Pending',
       tier: tierLabel(profile.membership_tier)
     }
   };
@@ -1013,7 +1017,11 @@ export async function getCaProfile(userId) {
       onlineFee: profile.online_fee != null ? Number(profile.online_fee) : Number(profile.fees),
       inPersonFee: profile.inperson_fee != null ? Number(profile.inperson_fee) : Number(profile.fees),
       packagePricing: profile.availability || '',
-      verificationStatus: profile.verification_stat === 'verified' ? 'Approved' : 'Pending',
+      verificationStatus: profile.verification_stat === 'verified'
+        ? 'Approved'
+        : profile.verification_stat === 'rejected'
+          ? 'Rejected'
+          : 'Pending',
       tier: tierLabel(profile.membership_tier)
     }
   };
