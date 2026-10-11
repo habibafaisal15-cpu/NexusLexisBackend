@@ -8,7 +8,27 @@ dotenv.config({ path: join(__dirname, '..', '.env') });
 
 const { Pool } = pg;
 
+function shouldUseSsl() {
+  if (process.env.DB_SSL === 'true') return true;
+  if (process.env.DB_SSL === 'false') return false;
+  if (process.env.DATABASE_URL?.includes('sslmode=require')) return true;
+  const host = String(process.env.DB_HOST || '');
+  return host.includes('neon.tech') || Boolean(process.env.VERCEL);
+}
+
 function buildPoolConfig(maxConnections = 20) {
+  if (process.env.DATABASE_URL?.trim()) {
+    const config = {
+      connectionString: process.env.DATABASE_URL.trim(),
+      max: Number(process.env.DB_POOL_MAX || maxConnections),
+      idleTimeoutMillis: process.env.VERCEL ? Number(process.env.DB_IDLE_TIMEOUT_MS || 5000) : 30000,
+      connectionTimeoutMillis: Number(process.env.DB_CONNECT_TIMEOUT_MS || (process.env.VERCEL ? 30000 : 10000)),
+      allowExitOnIdle: Boolean(process.env.VERCEL),
+    };
+    if (shouldUseSsl()) config.ssl = { rejectUnauthorized: false };
+    return config;
+  }
+
   const config = {
     host: process.env.DB_HOST || 'localhost',
     port: Number(process.env.DB_PORT || 5432),
@@ -17,11 +37,11 @@ function buildPoolConfig(maxConnections = 20) {
     password: process.env.DB_PASSWORD,
     max: Number(process.env.DB_POOL_MAX || maxConnections),
     idleTimeoutMillis: process.env.VERCEL ? Number(process.env.DB_IDLE_TIMEOUT_MS || 5000) : 30000,
-    connectionTimeoutMillis: Number(process.env.DB_CONNECT_TIMEOUT_MS || (process.env.VERCEL ? 20000 : 10000)),
+    connectionTimeoutMillis: Number(process.env.DB_CONNECT_TIMEOUT_MS || (process.env.VERCEL ? 30000 : 10000)),
     allowExitOnIdle: Boolean(process.env.VERCEL),
   };
 
-  if (process.env.DB_SSL === 'true' || process.env.DATABASE_URL?.includes('sslmode=require')) {
+  if (shouldUseSsl()) {
     config.ssl = { rejectUnauthorized: false };
   }
 
@@ -36,20 +56,32 @@ function isTransientDbError(err) {
     msg.includes('timeout exceeded when trying to connect')
     || msg.includes('connection terminated')
     || msg.includes('cannot connect')
+    || msg.includes('server closed the connection')
     || err?.code === 'ETIMEDOUT'
     || err?.code === 'ECONNRESET'
     || err?.code === 'ECONNREFUSED'
+    || err?.code === '57P01'
   );
 }
 
-export async function query(text, params) {
-  try {
-    return await pool.query(text, params);
-  } catch (err) {
-    if (!process.env.VERCEL || !isTransientDbError(err)) throw err;
-    await new Promise((r) => setTimeout(r, 250));
-    return pool.query(text, params);
+async function withDbRetry(operation, { attempts = 3 } = {}) {
+  let lastErr;
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      return await operation();
+    } catch (err) {
+      lastErr = err;
+      if (!process.env.VERCEL || !isTransientDbError(err) || i === attempts - 1) {
+        throw err;
+      }
+      await new Promise((r) => setTimeout(r, 400 * (i + 1)));
+    }
   }
+  throw lastErr;
+}
+
+export async function query(text, params) {
+  return withDbRetry(() => pool.query(text, params));
 }
 
 export async function testConnection() {

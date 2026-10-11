@@ -79,7 +79,18 @@ app.get('/api/health', async (req, res) => {
     emailConfigured: isEmailDeliveryConfigured(),
     signupOtpSkipped: isSignupOtpSkipped(),
     passwordResetOtpSkipped: isPasswordResetOtpSkipped(),
+    db: 'skipped',
   };
+
+  // Always touch DB on health so Neon cold starts warm before login/Google.
+  try {
+    await testConnection();
+    payload.db = 'ok';
+  } catch (err) {
+    payload.status = 'degraded';
+    payload.db = 'error';
+    payload.dbError = err.message;
+  }
 
   if (req.query.email === '1' || req.query.check === 'email') {
     payload.email = await verifyEmailDelivery();
@@ -88,7 +99,7 @@ app.get('/api/health', async (req, res) => {
     }
   }
 
-  res.json(payload);
+  res.status(payload.db === 'error' ? 503 : 200).json(payload);
 });
 
 app.use('/api/auth', authRoutes);

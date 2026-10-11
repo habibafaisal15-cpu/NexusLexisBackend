@@ -1,6 +1,6 @@
 import bcrypt from 'bcryptjs';
 import { OAuth2Client } from 'google-auth-library';
-import { pool, query } from '../db/index.js';
+import { getClient, query } from '../db/index.js';
 import { syncToDashboardUser } from '../db/userSync.js';
 import { buildTokenPayload, toPublicUser } from '../middleware/auth.js';
 import { validateEmailForSignup } from '../utils/validation.js';
@@ -71,7 +71,7 @@ export async function registerUser({ fullName, email, password, phone, role = 'c
   // bcryptjs is pure JS — cost 10 is too slow on Vercel serverless (~several seconds).
   const bcryptRounds = Number(process.env.BCRYPT_ROUNDS) || (process.env.VERCEL ? 8 : 10);
   const passwordHash = await bcrypt.hash(password, bcryptRounds);
-  const db = await pool.connect();
+  const db = await getClient();
 
   try {
     await db.query('BEGIN');
@@ -184,7 +184,7 @@ async function upsertGoogleUser({ googleId, email, fullName, defaultRole }, allo
   }
 
   if (!user) {
-    const db = await pool.connect();
+    const db = await getClient();
     try {
       await db.query('BEGIN');
       const created = await db.query(
