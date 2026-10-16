@@ -1,5 +1,7 @@
 # Frontend fix — Google Sign-Up on Hostinger
 
+> **Full FE handoff (preferred):** [`Frontend_Hostinger_Google_SignIn_Handoff.md`](./Frontend_Hostinger_Google_SignIn_Handoff.md)
+
 **Site:** https://nexuslexis.law  
 **Auth API:** https://nexus-lexis-backend-45v4.vercel.app/api/auth
 
