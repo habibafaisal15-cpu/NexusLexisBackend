@@ -10,4 +10,6 @@ Or download from the live Auth API after deploy:
 - https://nexus-lexis-backend-45v4.vercel.app/api/auth/google/hostinger/google-auth.html  
 - https://nexus-lexis-backend-45v4.vercel.app/api/auth/google/hostinger/.htaccess  
 
-Then change the Google button to `/google/start` (see `docs/Frontend_Google_Redirect_Fix.md`).
+Then change the Google button to `/google/start`.
+
+**Full FE handoff:** [`../Frontend_Hostinger_Google_SignIn_Handoff.md`](../Frontend_Hostinger_Google_SignIn_Handoff.md)
