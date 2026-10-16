@@ -1,0 +1,19 @@
+# NexusLexis — Hostinger Apache SPA fallback
+# Upload to public_html (same folder as index.html).
+# Without this, /login /signup /account return 404 and Google OAuth cannot return.
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # Real files and folders (assets, google-auth.html, etc.)
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  # Client-side routes → index.html
+  RewriteRule ^ index.html [L]
+</IfModule>
+
+# Optional: stop directory listing
+Options -Indexes

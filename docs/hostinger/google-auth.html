@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Signing you in… — NexusLexis</title>
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      font-family: Georgia, "Times New Roman", serif;
+      background: #0f1c2e;
+      color: #f4efe6;
+    }
+    .card {
+      max-width: 28rem;
+      padding: 2rem;
+      text-align: center;
+      line-height: 1.45;
+    }
+    .err { color: #ffb4a8; }
+    a { color: #d4b483; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1 id="title">Signing you in…</h1>
+    <p id="msg">Please wait while we finish Google sign-in.</p>
+    <p id="extra" hidden></p>
+  </div>
+  <script>
+    (function () {
+      // Must match FE tokenStorage sessionStorage keys (tokenStorage-*.js)
+      var TOKEN_KEY = 'accessToken';
+      var TOKEN_ALIAS = 'token';
+      var REFRESH_KEY = 'refreshToken';
+      var USER_KEY = 'user';
+
+      var params = new URLSearchParams(window.location.search);
+      var err = params.get('googleError');
+      var token = params.get('token') || params.get('accessToken');
+      var refresh = params.get('refreshToken');
+      var next = params.get('next') || '/';
+
+      var title = document.getElementById('title');
+      var msg = document.getElementById('msg');
+      var extra = document.getElementById('extra');
+
+      if (err) {
+        title.textContent = 'Google sign-in failed';
+        title.className = 'err';
+        msg.textContent = err;
+        extra.hidden = false;
+        extra.innerHTML = '<a href="/login">Back to login</a> · <a href="/signup">Sign up</a>';
+        return;
+      }
+
+      if (!token) {
+        title.textContent = 'Missing sign-in token';
+        title.className = 'err';
+        msg.textContent = 'No token returned from Google. Please try again.';
+        extra.hidden = false;
+        extra.innerHTML = '<a href="/signup">Try again</a>';
+        return;
+      }
+
+      try {
+        sessionStorage.setItem(TOKEN_KEY, token);
+        sessionStorage.setItem(TOKEN_ALIAS, token);
+        if (refresh) sessionStorage.setItem(REFRESH_KEY, refresh);
+        // user filled after /me on app boot
+        sessionStorage.removeItem(USER_KEY);
+      } catch (e) {
+        title.textContent = 'Could not save session';
+        title.className = 'err';
+        msg.textContent = String(e && e.message || e);
+        return;
+      }
+
+      // Strip secrets from the address bar, then enter the SPA
+      var clean = next.charAt(0) === '/' ? next : '/';
+      window.location.replace(clean);
+    })();
+  </script>
+</body>
+</html>

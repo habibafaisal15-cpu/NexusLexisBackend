@@ -14,6 +14,8 @@ import { authMiddleware, buildTokenPayload, buildTokenPayloadFromBundle, toPubli
 import { validateEmailForSignup } from '../utils/validation.js';
 import { requestSignupOtp, verifySignupOtp, isSignupOtpSkipped, isPasswordResetOtpSkipped } from '../services/otpService.js';
 import { buildAuthSession, refreshAuthSession, logoutRefreshToken } from '../services/tokenService.js';
+import { getAccountAccessMeta } from '../services/accountAccess.js';
+import { findDashboardUserByEmail, syncToDashboardUser } from '../db/userSync.js';
 import {
   requestPasswordReset,
   verifyPasswordResetOtp,
@@ -235,12 +237,18 @@ router.get('/me', authMiddleware, asyncHandler(async (req, res) => {
     return res.status(401).json({ error: 'User not found or inactive' });
   }
 
-  const userId = Number(req.user.userId || req.user.sub);
+  // Prefer dashboard users.id (email sync) over JWT claim — avoids auth_users.id mismatch
+  let dashboardUser = await findDashboardUserByEmail(user.email);
+  if (!dashboardUser) {
+    dashboardUser = await syncToDashboardUser(user, user.password_hash);
+  }
+  const userId = dashboardUser?.id || Number(req.user.userId || req.user.sub);
   const profile = userId ? await getProfileForUser(userId, req.user.email) : null;
   const bundle = userId ? await profileRepo.getFullProfileBundle(userId) : null;
   const payload = bundle
     ? buildTokenPayloadFromBundle(user, bundle)
-    : buildTokenPayload(user);
+    : buildTokenPayload(user, dashboardUser);
+  const accountAccess = await getAccountAccessMeta(user, dashboardUser);
 
   res.json({
     user: {
@@ -248,19 +256,39 @@ router.get('/me', authMiddleware, asyncHandler(async (req, res) => {
       roles: payload.roles,
       dashboardUserId: userId || payload.userId,
       phone: profile?.phone || user.phone || '',
-      profile
-    }
+      profile,
+      verificationStatus: accountAccess.verificationStatus,
+      canAccessDashboard: accountAccess.canAccessDashboard,
+      nextStep: accountAccess.nextStep,
+      pendingVerificationRole: accountAccess.pendingVerificationRole,
+      canReapply: Boolean(accountAccess.canReapply),
+      canApplyAsLawyer: Boolean(accountAccess.canApplyAsLawyer),
+      canApplyAsCA: Boolean(accountAccess.canApplyAsCA),
+      message: accountAccess.message || null,
+    },
+    accountAccess,
+    message: accountAccess.message || undefined,
   });
 }));
 
 router.get('/config', (_req, res) => {
+  const authApi = process.env.AUTH_PUBLIC_URL || 'https://nexus-lexis-backend-45v4.vercel.app/api/auth';
   res.json({
     signupOtpRequired: !isSignupOtpSkipped(),
     passwordResetOtpRequired: !isPasswordResetOtpSkipped(),
     registerRoles: ['client', 'lawyer', 'ca'],
     authMethods: ['email', 'google'],
+    googleAuth: {
+      // Hostinger: use full-page redirect (no GIS popup / no CORS XHR)
+      recommendedMode: 'redirect',
+      startPath: '/google/start',
+      startUrlExample: `${authApi}/google/start?role=client&returnTo=${encodeURIComponent('https://nexuslexis.law')}`,
+      landingPath: googleFrontendLandingPath(),
+      warmupPath: '/ping',
+      note: 'FE must upload docs/hostinger/google-auth.html + .htaccess to Hostinger public_html',
+    },
     productionUrls: {
-      authApi: process.env.AUTH_PUBLIC_URL || 'https://nexus-lexis-backend-45v4.vercel.app/api/auth',
+      authApi,
       mainApi: process.env.MAIN_PUBLIC_URL || 'https://nexus-lexis-backend-ql8w.vercel.app/api/v2',
       lexApi: process.env.LEX_PUBLIC_URL || 'https://nexus-lexis-backend-ql8w.vercel.app/api/v1/lex',
     },
@@ -315,15 +343,124 @@ router.get('/google/url', asyncHandler(async (req, res) => {
   res.json({ url });
 }));
 
+/**
+ * Hostinger has no SPA rewrite by default, so /login 404s.
+ * Land on static /google-auth.html (uploaded to public_html) which writes
+ * sessionStorage keys then sends the user into the React app.
+ */
+function googleFrontendLandingPath() {
+  return process.env.GOOGLE_FE_LANDING_PATH?.trim() || '/google-auth.html';
+}
+
+function buildGoogleFrontendRedirect(frontend, { token, refreshToken, googleError, state, next } = {}) {
+  const redirectUrl = new URL(googleFrontendLandingPath(), frontend);
+  if (googleError) redirectUrl.searchParams.set('googleError', String(googleError));
+  if (token) redirectUrl.searchParams.set('token', token);
+  if (refreshToken) redirectUrl.searchParams.set('refreshToken', refreshToken);
+  if (state) redirectUrl.searchParams.set('state', String(state));
+  if (next) redirectUrl.searchParams.set('next', String(next));
+  return redirectUrl.toString();
+}
+
+/** Downloadable Hostinger landing page (same bytes FE must put in public_html). */
+const GOOGLE_AUTH_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Signing you in… — NexusLexis</title>
+  <style>
+    body{margin:0;min-height:100vh;display:grid;place-items:center;font-family:Georgia,"Times New Roman",serif;background:#0f1c2e;color:#f4efe6}
+    .card{max-width:28rem;padding:2rem;text-align:center;line-height:1.45}
+    .err{color:#ffb4a8} a{color:#d4b483}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1 id="title">Signing you in…</h1>
+    <p id="msg">Please wait while we finish Google sign-in.</p>
+    <p id="extra" hidden></p>
+  </div>
+  <script>
+    (function () {
+      var TOKEN_KEY = 'accessToken';
+      var TOKEN_ALIAS = 'token';
+      var REFRESH_KEY = 'refreshToken';
+      var USER_KEY = 'user';
+      var params = new URLSearchParams(window.location.search);
+      var err = params.get('googleError');
+      var token = params.get('token') || params.get('accessToken');
+      var refresh = params.get('refreshToken');
+      var next = params.get('next') || '/';
+      var title = document.getElementById('title');
+      var msg = document.getElementById('msg');
+      var extra = document.getElementById('extra');
+      if (err) {
+        title.textContent = 'Google sign-in failed';
+        title.className = 'err';
+        msg.textContent = err;
+        extra.hidden = false;
+        extra.innerHTML = '<a href="/login">Back to login</a> · <a href="/signup">Sign up</a>';
+        return;
+      }
+      if (!token) {
+        title.textContent = 'Missing sign-in token';
+        title.className = 'err';
+        msg.textContent = 'No token returned from Google. Please try again.';
+        extra.hidden = false;
+        extra.innerHTML = '<a href="/signup">Try again</a>';
+        return;
+      }
+      try {
+        sessionStorage.setItem(TOKEN_KEY, token);
+        sessionStorage.setItem(TOKEN_ALIAS, token);
+        if (refresh) sessionStorage.setItem(REFRESH_KEY, refresh);
+        sessionStorage.removeItem(USER_KEY);
+      } catch (e) {
+        title.textContent = 'Could not save session';
+        title.className = 'err';
+        msg.textContent = String(e && e.message || e);
+        return;
+      }
+      var clean = next.charAt(0) === '/' ? next : '/';
+      window.location.replace(clean);
+    })();
+  </script>
+</body>
+</html>`;
+
+router.get('/google/hostinger/google-auth.html', (_req, res) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="google-auth.html"');
+  res.send(GOOGLE_AUTH_HTML);
+});
+
+router.get('/google/hostinger/.htaccess', (_req, res) => {
+  const body = `# NexusLexis Hostinger SPA fallback — upload as public_html/.htaccess
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+  RewriteRule ^ index.html [L]
+</IfModule>
+Options -Indexes
+`;
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename=".htaccess"');
+  res.send(body);
+});
+
 router.get('/google/callback', asyncHandler(async (req, res) => {
   const { code, state, error: oauthError, error_description: oauthErrorDescription } = req.query;
   const frontend = resolveGoogleFrontendRedirect(req, state);
-  const redirectWithError = (message) => {
-    const redirectUrl = new URL('/login', frontend);
-    redirectUrl.searchParams.set('googleError', message);
-    redirectUrl.searchParams.set('state', String(state || 'login'));
-    return res.redirect(redirectUrl.toString());
-  };
+  const redirectWithError = (message) =>
+    res.redirect(buildGoogleFrontendRedirect(frontend, {
+      googleError: message,
+      state: state || 'login',
+      next: '/login',
+    }));
 
   if (oauthError) {
     return redirectWithError(String(oauthErrorDescription || oauthError));
@@ -336,11 +473,12 @@ router.get('/google/callback', asyncHandler(async (req, res) => {
     const roleFromState = parseGoogleRoleFromState(state);
     const result = await exchangeGoogleAuthCode(String(code), roleFromState);
     const session = await buildAuthSession(result.authUser, result.dashboardUser);
-    const redirectUrl = new URL('/login', frontend);
-    redirectUrl.searchParams.set('token', session.accessToken);
-    redirectUrl.searchParams.set('refreshToken', session.refreshToken);
-    redirectUrl.searchParams.set('state', String(state || 'login'));
-    return res.redirect(redirectUrl.toString());
+    return res.redirect(buildGoogleFrontendRedirect(frontend, {
+      token: session.accessToken,
+      refreshToken: session.refreshToken,
+      state: state || 'login',
+      next: '/',
+    }));
   } catch (err) {
     console.error('[google/callback]', err.message);
     return redirectWithError(err.message || 'Google sign-in failed');
@@ -353,6 +491,14 @@ router.post('/google/token', asyncHandler(async (req, res) => {
 
   if (!tokenValue) {
     return res.status(400).json({ error: 'Google ID token is required' });
+  }
+
+  // Warm Neon before verify+upsert so Hostinger GIS clients avoid long cold hangs.
+  try {
+    const { testConnection } = await import('../db/index.js');
+    await testConnection();
+  } catch {
+    // continue — loginWithGoogleIdToken will surface DB errors
   }
 
   const user = await loginWithGoogleIdToken(tokenValue, role);

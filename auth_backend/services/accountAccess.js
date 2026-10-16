@@ -36,29 +36,34 @@ export async function getAccountAccessMeta(authUser, dashboardUser = null) {
         accountRole: 'lawyer',
         verificationStatus: 'ApplicationRequired',
         canAccessDashboard: false,
+        canReapply: false,
+        canApplyAsLawyer: true,
         nextStep: 'complete_lawyer_application',
         message: lawyerMessages(null),
-        pendingVerificationRole: 'Lawyer',
+        pendingVerificationRole: null,
       };
     }
     const verification = repo.mapVerification(profile);
     const canAccess = profile.verification_stat === 'verified';
     const isRejected = profile.verification_stat === 'rejected';
+    const isPending = profile.verification_stat === 'pending';
     return {
       accountRole: 'lawyer',
       verificationStatus: verification.status === 'None' ? 'ApplicationRequired' : verification.status,
       canAccessDashboard: canAccess,
       canReapply: isRejected,
-      canApplyAsLawyer: isRejected || !profile,
+      canApplyAsLawyer: isRejected,
       nextStep: canAccess
         ? 'dashboard'
-        : profile.verification_stat === 'pending'
+        : isPending
           ? 'verification_pending'
           : 'complete_lawyer_application',
       message: lawyerMessages(profile.verification_stat),
-      pendingVerificationRole: profile.verification_stat === 'pending' ? 'Lawyer' : null,
+      // Only true pending review — never for rejected / re-apply
+      pendingVerificationRole: isPending ? 'Lawyer' : null,
       verificationSubmittedAt: verification.submittedAt,
       verificationReviewDeadline: verification.reviewDeadline,
+      lawyerVerification: verification,
     };
   }
 
@@ -69,29 +74,33 @@ export async function getAccountAccessMeta(authUser, dashboardUser = null) {
         accountRole: 'ca',
         verificationStatus: 'ApplicationRequired',
         canAccessDashboard: false,
+        canReapply: false,
+        canApplyAsCA: true,
         nextStep: 'complete_ca_application',
         message: caMessages(null),
-        pendingVerificationRole: 'CA',
+        pendingVerificationRole: null,
       };
     }
     const verification = repo.mapVerification(profile);
     const canAccess = profile.verification_stat === 'verified';
     const isRejected = profile.verification_stat === 'rejected';
+    const isPending = profile.verification_stat === 'pending';
     return {
       accountRole: 'ca',
       verificationStatus: verification.status === 'None' ? 'ApplicationRequired' : verification.status,
       canAccessDashboard: canAccess,
       canReapply: isRejected,
-      canApplyAsCA: isRejected || !profile,
+      canApplyAsCA: isRejected,
       nextStep: canAccess
         ? 'dashboard'
-        : profile.verification_stat === 'pending'
+        : isPending
           ? 'verification_pending'
           : 'complete_ca_application',
       message: caMessages(profile.verification_stat),
-      pendingVerificationRole: profile.verification_stat === 'pending' ? 'CA' : null,
+      pendingVerificationRole: isPending ? 'CA' : null,
       verificationSubmittedAt: verification.submittedAt,
       verificationReviewDeadline: verification.reviewDeadline,
+      caVerification: verification,
     };
   }
 

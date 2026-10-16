@@ -17,6 +17,33 @@ const googleClient = new OAuth2Client(
   process.env.GOOGLE_REDIRECT_URI?.trim()
 );
 
+function googleAudiences() {
+  const primary = process.env.GOOGLE_CLIENT_ID?.trim();
+  const extras = String(process.env.GOOGLE_CLIENT_IDS || '')
+    .split(',')
+    .map((id) => id.trim())
+    .filter(Boolean);
+  return [...new Set([primary, ...extras].filter(Boolean))];
+}
+
+async function verifyGoogleIdToken(idToken) {
+  const audience = googleAudiences();
+  if (!audience.length) {
+    throw new Error('Google sign-in is not configured on the server');
+  }
+  try {
+    return await googleClient.verifyIdToken({ idToken, audience });
+  } catch (err) {
+    const msg = String(err?.message || err);
+    if (/audience|recipient|client_id/i.test(msg)) {
+      throw new Error(
+        'Google Client ID mismatch between the website and Auth API. Use the same Client ID in the frontend and GOOGLE_CLIENT_ID on Vercel.'
+      );
+    }
+    throw new Error(msg || 'Invalid Google ID token');
+  }
+}
+
 export async function findUserByEmail(email) {
   const result = await query(
     `SELECT id, full_name, email, password_hash, role, auth_provider, google_id, is_active, phone
@@ -121,16 +148,7 @@ export async function loginUser({ email, password }) {
 }
 
 export async function loginWithGoogleIdToken(idToken, defaultRole = 'client') {
-  const clientId = process.env.GOOGLE_CLIENT_ID?.trim();
-  if (!clientId) {
-    throw new Error('Google sign-in is not configured on the server');
-  }
-
-  const ticket = await googleClient.verifyIdToken({
-    idToken,
-    audience: clientId,
-  });
-
+  const ticket = await verifyGoogleIdToken(idToken);
   const payload = ticket.getPayload();
   if (!payload?.email) {
     throw new Error('Google account did not return an email address');
@@ -145,16 +163,23 @@ export async function loginWithGoogleIdToken(idToken, defaultRole = 'client') {
 }
 
 export async function exchangeGoogleAuthCode(code, defaultRole = 'client') {
-  const clientId = process.env.GOOGLE_CLIENT_ID?.trim();
-  const { tokens } = await googleClient.getToken(code);
+  let tokens;
+  try {
+    ({ tokens } = await googleClient.getToken(code));
+  } catch (err) {
+    const msg = String(err?.message || err);
+    if (/redirect_uri_mismatch/i.test(msg)) {
+      throw new Error(
+        'Google redirect URI mismatch. Authorized redirect URI must be exactly: '
+        + (process.env.GOOGLE_REDIRECT_URI || 'https://nexus-lexis-backend-45v4.vercel.app/api/auth/google/callback')
+      );
+    }
+    throw new Error(msg || 'Google authorization code exchange failed');
+  }
   if (!tokens?.id_token) {
     throw new Error('Google did not return an ID token');
   }
-  const ticket = await googleClient.verifyIdToken({
-    idToken: tokens.id_token,
-    audience: clientId,
-  });
-
+  const ticket = await verifyGoogleIdToken(tokens.id_token);
   const payload = ticket.getPayload();
   if (!payload?.email) {
     throw new Error('Google account did not return an email address');

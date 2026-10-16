@@ -426,13 +426,21 @@ export async function submitLawyerApplication(userId, data) {
 
 export async function setLawyerVerificationStatus(userId, status) {
 
-  await query(
+  const result = await query(
 
-    `UPDATE lawyer_profiles SET verification_stat = $2 WHERE user_id = $1`,
+    `UPDATE lawyer_profiles SET verification_stat = $2 WHERE user_id = $1 RETURNING *`,
 
     [userId, status]
 
   );
+
+  if (!result.rows[0]) {
+
+    throw new Error('Lawyer application not found');
+
+  }
+
+  return result.rows[0];
 
 }
 
@@ -610,13 +618,21 @@ export async function submitCAApplication(userId, data) {
 
 export async function setCAVerificationStatus(userId, status) {
 
-  await query(
+  const result = await query(
 
-    `UPDATE ca_profiles SET verification_stat = $2 WHERE user_id = $1`,
+    `UPDATE ca_profiles SET verification_stat = $2 WHERE user_id = $1 RETURNING *`,
 
     [userId, status]
 
   );
+
+  if (!result.rows[0]) {
+
+    throw new Error('CA application not found');
+
+  }
+
+  return result.rows[0];
 
 }
 
@@ -740,7 +756,9 @@ export function mapVerification(prof) {
 
 
 
-  const deadline = prof.verification_review_deadline
+  const isPending = prof.verification_stat === 'pending';
+
+  const deadline = isPending && prof.verification_review_deadline
 
     ? new Date(prof.verification_review_deadline)
 
@@ -760,9 +778,11 @@ export function mapVerification(prof) {
 
     submittedAt: prof.verification_submitted_at || null,
 
-    reviewDeadline: prof.verification_review_deadline || null,
+    // Hide review countdown after reject/approve so FE does not keep showing "pending"
 
-    daysRemaining
+    reviewDeadline: isPending ? (prof.verification_review_deadline || null) : null,
+
+    daysRemaining: isPending ? daysRemaining : null
 
   };
 
