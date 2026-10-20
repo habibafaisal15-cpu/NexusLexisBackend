@@ -114,21 +114,6 @@ def main():
         ],
     )
 
-    doc.add_heading("Urdu summary (internal)", 1)
-    add_para(
-        doc,
-        "Google sign-up Hostinger par is liye nahi chal raha ke live site abhi bhi Google popup "
-        "(GIS) use karti hai, aur Hostinger par /login, /signup 404 dete hain. Naye client secret se yeh "
-        "fix nahi hota. FE ko do files public_html mein upload karni hain (.htaccess + google-auth.html) "
-        "aur Google button ko /google/start redirect par lagana hai. Client secret sirf backend (Vercel) "
-        "par hota hai — FE ko secret nahi dena.",
-    )
-    add_para(
-        doc,
-        "Doosra issue: admin jab lawyer reject kare to FE ko Pending nahi Rejected dikhana hai, "
-        "aur dubara apply enable karna hai (canReapply / canApplyAsLawyer).",
-    )
-
     doc.add_heading("1. Live check (20 Oct 2026) — what is broken", 1)
     add_table(
         doc,
