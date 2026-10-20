@@ -62,8 +62,9 @@ export async function findUserById(id) {
   return result.rows[0] || null;
 }
 
-async function touchLastLogin(userId) {
-  await query('UPDATE auth_users SET last_login_at = CURRENT_TIMESTAMP WHERE id = $1', [userId]);
+async function touchLastLogin(userId, client = null) {
+  const run = client ? client.query.bind(client) : query;
+  await run('UPDATE auth_users SET last_login_at = CURRENT_TIMESTAMP WHERE id = $1', [userId]);
 }
 
 export async function registerUser({ fullName, email, password, phone, role = 'client', verificationToken }) {
@@ -219,15 +220,25 @@ async function upsertGoogleUser({ googleId, email, fullName, defaultRole }, allo
         [fullName, email, defaultRole, googleId]
       );
       user = created.rows[0];
-      await touchLastLogin(user.id);
-      const dashboardUser = await syncToDashboardUser(user, null, db);
+      // Must use the same client — a second pool connection deadlocks on the uncommitted row
+      // (this is why first-time Google signup failed, while linking an existing email worked).
+      await touchLastLogin(user.id, db);
+      const dashboardUser = await syncToDashboardUser(user, '', db);
       await db.query('COMMIT');
       void notifyNewUser({ email, role: defaultRole, source: 'google' });
       return { authUser: user, dashboardUser };
     } catch (err) {
-      await db.query('ROLLBACK');
+      try {
+        await db.query('ROLLBACK');
+      } catch {
+        // ignore rollback errors on a dead connection
+      }
       if (allowRetry && isUniqueViolation(err)) {
         return upsertGoogleUser({ googleId, email, fullName, defaultRole }, false);
+      }
+      const msg = String(err?.message || err);
+      if (/timeout|deadlock|lock wait/i.test(msg)) {
+        throw new Error('Google sign-up timed out. Please try Continue with Google again.');
       }
       throw err;
     } finally {

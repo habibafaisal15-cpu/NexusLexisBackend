@@ -168,7 +168,11 @@ export async function syncToDashboardUser(authUser, passwordHash = null, client 
   dashboardUser = await insertDashboardUser(authUser, passwordHash, client);
 
   if (authUser.role === 'client') {
-    await initializeClientWorkspace(dashboardUser.id, dashboardUser.username, client);
+    try {
+      await initializeClientWorkspace(dashboardUser.id, dashboardUser.username, client);
+    } catch (err) {
+      console.warn('[userSync] Welcome workspace skipped:', err.message);
+    }
   }
 
   return dashboardUser;
