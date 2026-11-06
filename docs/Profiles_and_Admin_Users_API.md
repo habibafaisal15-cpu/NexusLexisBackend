@@ -345,8 +345,14 @@ or
 
 ## D. Apply (unchanged registration)
 
-`POST {AUTH}/profile/lawyer/apply`  
-`POST {AUTH}/profile/ca/apply`
+These registration apply endpoints already existed. Listed here so FE has one sheet.
+
+| Action | Method | Path | Headers | Body |
+|--------|--------|------|---------|------|
+| Lawyer first-time apply | POST | `{AUTH}/profile/lawyer/apply` | Authorization: Bearer token | JSON: barCouncilName, barCouncilNumber, city, shortBio, fullBio, officeAddress, onlineFee, inPersonFee, documents |
+| CA first-time apply | POST | `{AUTH}/profile/ca/apply` | Authorization: Bearer token | JSON: cnic, qualification, city, fees, plus CA credential fields |
+
+After apply, `GET {MAIN}/lawyer/profile` or `GET {MAIN}/ca/profile` returns the saved Settings shape including vault.
 
 ---
 
@@ -356,10 +362,28 @@ or
 |----|--------|------|
 | Open Client profile | GET | `{MAIN}/client/profile` |
 | Save Client | PUT | `{AUTH}/profile/client` |
-| Client photo | POST | `{MAIN}/client/profile/photo` |
-| Open/save Lawyer | GET/PATCH | `{MAIN}/lawyer/profile` |
-| Open/save CA | GET/PATCH | `{MAIN}/ca/profile` |
-| Change password | POST | `{MAIN}/account/password` or `{AUTH}/account/password` |
-| Sessions | GET/DELETE/POST | `{MAIN}/account/sessions…` |
-| Language | PATCH | `{MAIN}/account/preferences` |
-| Admin Users screen | | `{MAIN}/admin/users…` |
+| Client photo | POST | `{MAIN}/client/profile/photo` (multipart field `file`) |
+| Open Lawyer profile | GET | `{MAIN}/lawyer/profile` |
+| Save Lawyer profile | PATCH | `{MAIN}/lawyer/profile` |
+| Lawyer photo | POST | `{MAIN}/lawyer/profile/photo` (multipart field `photo`) |
+| Open CA profile | GET | `{MAIN}/ca/profile` |
+| Save CA profile | PATCH | `{MAIN}/ca/profile` |
+| CA photo | POST | `{MAIN}/ca/profile/photo` (multipart field `photo`) |
+| Vault upload | POST | `{AUTH}/profile/documents/upload` (multipart `file` + `docType`) |
+| Change password modal | POST | `{MAIN}/account/password` or `{AUTH}/account/password` |
+| Active sessions list | GET | `{MAIN}/account/sessions` |
+| Revoke one session | DELETE | `{MAIN}/account/sessions/:sessionId` |
+| Revoke other sessions | POST | `{MAIN}/account/sessions/revoke-others` |
+| Language preference | PATCH | `{MAIN}/account/preferences` |
+| Admin Users KPIs | GET | `{MAIN}/admin/users/stats` |
+| Admin Users table | GET | `{MAIN}/admin/users` |
+| Admin user drawer | GET | `{MAIN}/admin/users/:id` |
+| Admin create user | POST | `{MAIN}/admin/users` |
+| Admin edit user | PATCH | `{MAIN}/admin/users/:id` |
+| Admin manage roles | PUT | `{MAIN}/admin/users/:id/roles` |
+| Admin approve | POST | `{MAIN}/admin/users/:id/approve` |
+| Admin suspend / reinstate | POST | `{MAIN}/admin/users/:id/suspend` · `…/reinstate` |
+| Admin reset password | POST | `{MAIN}/admin/users/:id/reset-password` |
+| Admin email | POST | `{MAIN}/admin/users/:id/email` |
+| Admin sessions | GET/DELETE/POST | `{MAIN}/admin/users/:id/sessions…` |
+| Admin bulk bar | POST | `{MAIN}/admin/users/bulk` |
