@@ -245,6 +245,26 @@ export function isEmailDeliveryConfigured() {
   return isGraphDelegatedConfigured() || isGraphConfigured() || isResendConfigured() || isGmailConfigured() || isSmtpConfigured();
 }
 
+export async function sendAppEmail({ to, subject, text, html }) {
+  const payload = { to, subject, text, html: html || `<pre>${text || ''}</pre>` };
+  const providers = getEmailProviderOrder();
+  for (const provider of providers) {
+    try {
+      const result = await sendWithProvider(provider, payload);
+      if (result?.delivered) return result;
+    } catch (err) {
+      console.error(`[app-email] ${provider} failed for ${to}:`, err.message);
+    }
+  }
+  if (!isEmailDeliveryConfigured()) {
+    console.warn(`[app-email] No email provider — skipped send to ${to}: ${subject}`);
+    return { delivered: false, devMode: true };
+  }
+  const err = new Error('Could not send email');
+  err.code = 'EMAIL_DELIVERY_FAILED';
+  throw err;
+}
+
 function explainSmtpError(message = '') {
   if (/smtp_auth_disabled|SmtpClientAuthentication is disabled/i.test(message)) {
     return [

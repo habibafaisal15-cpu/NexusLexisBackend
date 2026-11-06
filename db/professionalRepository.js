@@ -273,46 +273,66 @@ export async function getLawyerOrders(userId) {
 }
 
 export async function getLawyerProfile(userId) {
+  const { listVaultForUser, splitList } = await import('./vaultHelper.js');
+  const { ensureAccountSchema } = await import('./ensureAccountSchema.js');
+  await ensureAccountSchema();
   const profile = await ensureLawyerProfile(userId);
+  const userRow = await query(
+    `SELECT email, phone, language_pref FROM users WHERE id = $1`,
+    [userId]
+  ).then((r) => r.rows[0] || {});
   const profileId = String(profile.id);
   const photo = profile.photo || profile.documents?.profilePhoto || null;
-  return {
-    profile: {
-      id: profileId,
-      lawyerProfileId: profileId,
-      professionalProfileId: profileId,
-      userId: String(profile.user_id),
-      email: profile.email || null,
-      fullName: profile.full_name,
-      name: profile.full_name,
-      image: photo,
-      photo: photo,
-      photoUrl: photo,
-      avatarUrl: photo,
-      profilePicture: photo,
-      city: profile.city,
-      shortBio: profile.short_bio,
-      fullBio: profile.full_bio,
-      bio: profile.full_bio,
-      officeAddress: profile.office_address || '',
-      barCouncilName: profile.bar_council_name,
-      barCouncilNumber: profile.bar_council_num,
-      barNumber: profile.bar_council_num,
-      practiceAreas: profile.practice_area ? [profile.practice_area] : [],
-      languages: profile.language ? [profile.language] : ['English'],
-      onlineFee: Number(profile.online_fee),
-      inPersonFee: Number(profile.inperson_fee),
-      consultationFeeOnline: Number(profile.online_fee),
-      consultationFeeInPerson: Number(profile.inperson_fee),
-      consultationModes: ['Online', 'In-Person'],
-      verificationStatus: profile.verification_stat === 'verified'
-        ? 'Approved'
-        : profile.verification_stat === 'rejected'
-          ? 'Rejected'
-          : 'Pending',
-      tier: tierLabel(profile.membership_tier)
-    }
+  const practiceAreas = splitList(profile.practice_areas).length
+    ? splitList(profile.practice_areas)
+    : (profile.practice_area ? [profile.practice_area] : []);
+  const courts = splitList(profile.courts);
+  const vault = await listVaultForUser(userId, 'lawyer');
+  const payload = {
+    id: profileId,
+    lawyerProfileId: profileId,
+    professionalProfileId: profileId,
+    userId: String(profile.user_id),
+    email: profile.email || userRow.email || null,
+    phone: profile.phone || userRow.phone || null,
+    fullName: profile.full_name,
+    name: profile.full_name,
+    image: photo,
+    photo,
+    photoUrl: photo,
+    avatarUrl: photo,
+    profilePicture: photo,
+    city: profile.city,
+    chamberAddress: profile.office_address || '',
+    officeAddress: profile.office_address || '',
+    barRoll: profile.bar_council_num,
+    barCouncilName: profile.bar_council_name,
+    barCouncilNumber: profile.bar_council_num,
+    barNumber: profile.bar_council_num,
+    experienceYears: profile.experience_years != null ? Number(profile.experience_years) : null,
+    enrolmentDate: profile.enrolment_date || null,
+    courtLevel: profile.court_level || null,
+    practiceAreas,
+    courts,
+    shortBio: profile.short_bio,
+    fullBio: profile.full_bio,
+    bio: profile.full_bio,
+    language: userRow.language_pref || 'en',
+    languages: profile.language ? [profile.language] : ['English'],
+    onlineFee: Number(profile.online_fee),
+    inPersonFee: Number(profile.inperson_fee),
+    consultationFeeOnline: Number(profile.online_fee),
+    consultationFeeInPerson: Number(profile.inperson_fee),
+    consultationModes: ['Online', 'In-Person'],
+    verificationStatus: profile.verification_stat === 'verified'
+      ? 'Approved'
+      : profile.verification_stat === 'rejected'
+        ? 'Rejected'
+        : 'Pending',
+    tier: tierLabel(profile.membership_tier),
+    vault,
   };
+  return { ...payload, profile: payload };
 }
 
 export async function updateLawyerProfilePhoto(userId, file) {
@@ -331,13 +351,21 @@ export async function updateLawyerProfilePhoto(userId, file) {
 }
 
 export async function updateLawyerProfile(userId, payload) {
-  const profile = await ensureLawyerProfile(userId);
+  const { joinList } = await import('./vaultHelper.js');
+  const { ensureAccountSchema } = await import('./ensureAccountSchema.js');
+  await ensureAccountSchema();
+  await ensureLawyerProfile(userId);
+  const practiceAreas = joinList(payload.practiceAreas);
   const practiceArea = Array.isArray(payload.practiceAreas)
     ? payload.practiceAreas[0]
-    : payload.practiceAreas;
+    : payload.practiceAreas || payload.practiceArea;
   const language = Array.isArray(payload.languages)
     ? payload.languages.join(', ')
     : payload.languages;
+  const name = payload.name || payload.fullName || null;
+  const barRoll = payload.barRoll || payload.barCouncilNumber || payload.barNumber || null;
+  const chamber = payload.chamberAddress || payload.officeAddress || null;
+  const bio = payload.bio || payload.fullBio || null;
 
   await query(
     `UPDATE lawyer_profiles SET
@@ -348,29 +376,66 @@ export async function updateLawyerProfile(userId, payload) {
       bar_council_num = COALESCE($5, bar_council_num),
       bar_council_name = COALESCE($6, bar_council_name),
       practice_area = COALESCE($7, practice_area),
-      language = COALESCE($8, language),
-      online_fee = COALESCE($9, online_fee),
-      inperson_fee = COALESCE($10, inperson_fee)
-     WHERE user_id = $11`,
+      practice_areas = COALESCE($8, practice_areas),
+      language = COALESCE($9, language),
+      online_fee = COALESCE($10, online_fee),
+      inperson_fee = COALESCE($11, inperson_fee),
+      office_address = COALESCE($12, office_address),
+      experience_years = COALESCE($13, experience_years),
+      enrolment_date = COALESCE($14, enrolment_date),
+      court_level = COALESCE($15, court_level),
+      courts = COALESCE($16, courts),
+      phone = COALESCE($17, phone)
+     WHERE user_id = $18`,
     [
-      payload.fullName || null,
+      name,
       payload.shortBio || null,
-      payload.fullBio || null,
+      bio,
       payload.city || null,
-      payload.barCouncilNumber || null,
+      barRoll,
       payload.barCouncilName || null,
       practiceArea || null,
+      practiceAreas || null,
       language || null,
       payload.onlineFee != null ? Number(payload.onlineFee) : null,
       payload.inPersonFee != null ? Number(payload.inPersonFee) : null,
+      chamber,
+      payload.experienceYears != null ? Number(payload.experienceYears) : null,
+      payload.enrolmentDate || null,
+      payload.courtLevel || null,
+      joinList(payload.courts),
+      payload.phone || null,
       userId
     ]
   );
 
-  if (payload.officeAddress) {
+  if (payload.phone || payload.email || payload.language) {
     await query(
-      'UPDATE lawyer_profiles SET office_address = $1 WHERE user_id = $2',
-      [payload.officeAddress, userId]
+      `UPDATE users SET
+         phone = COALESCE($1, phone),
+         email = COALESCE($2, email),
+         language_pref = COALESCE($3, language_pref)
+       WHERE id = $4`,
+      [payload.phone || null, payload.email ? String(payload.email).toLowerCase() : null, payload.language || null, userId]
+    );
+    if (payload.phone || payload.email) {
+      const emailRow = await query('SELECT email FROM users WHERE id = $1', [userId]);
+      const email = emailRow.rows[0]?.email;
+      if (email) {
+        await query(
+          `UPDATE auth_users SET phone = COALESCE($1, phone), email = COALESCE($2, email)
+           WHERE LOWER(email) = LOWER($3)`,
+          [payload.phone || null, payload.email ? String(payload.email).toLowerCase() : null, email]
+        ).catch(() => {});
+      }
+    }
+  }
+
+  if (barRoll || payload.enrolmentDate || payload.courtLevel) {
+    await query(
+      `UPDATE lawyer_profiles SET verification_stat = 'pending'
+       WHERE user_id = $1 AND verification_stat = 'verified'`,
+      [userId]
     ).catch(() => {});
   }
 
@@ -982,56 +1047,80 @@ export async function updateCaAppointment(userId, appointmentId, { status, meeti
 }
 
 export async function getCaProfile(userId) {
+  const { listVaultForUser, splitList } = await import('./vaultHelper.js');
+  const { ensureAccountSchema } = await import('./ensureAccountSchema.js');
+  await ensureAccountSchema();
   const profile = await ensureCaProfile(userId);
+  const userRow = await query(
+    `SELECT email, phone, language_pref FROM users WHERE id = $1`,
+    [userId]
+  ).then((r) => r.rows[0] || {});
   const expertise = parseServiceAreas(profile.service_areas);
+  const specializations = splitList(profile.specializations).length
+    ? splitList(profile.specializations)
+    : expertise;
   const profileId = String(profile.id);
   const photo = profile.photo || profile.documents?.profilePhoto || null;
-
-  return {
-    profile: {
-      id: profileId,
-      caProfileId: profileId,
-      professionalProfileId: profileId,
-      userId: String(profile.user_id),
-      email: profile.email || null,
-      fullName: profile.full_name,
-      name: profile.full_name,
-      image: photo,
-      photo: photo,
-      photoUrl: photo,
-      avatarUrl: photo,
-      profilePicture: photo,
-      cnic: profile.cnic,
-      icapMembershipNo: profile.icap_membership_no,
-      membershipNumber: profile.icap_membership_no,
-      qualification: profile.qualification,
-      city: profile.city,
-      officeLocation: profile.office_address || '',
-      address: profile.office_address || '',
-      shortBio: profile.short_bio || '',
-      fullBio: profile.full_bio || '',
-      bio: profile.full_bio || '',
-      expertise,
-      serviceAreas: expertise,
-      fees: Number(profile.fees),
-      onlineFee: profile.online_fee != null ? Number(profile.online_fee) : Number(profile.fees),
-      inPersonFee: profile.inperson_fee != null ? Number(profile.inperson_fee) : Number(profile.fees),
-      packagePricing: profile.availability || '',
-      verificationStatus: profile.verification_stat === 'verified'
-        ? 'Approved'
-        : profile.verification_stat === 'rejected'
-          ? 'Rejected'
-          : 'Pending',
-      tier: tierLabel(profile.membership_tier)
-    }
+  const vault = await listVaultForUser(userId, 'ca');
+  const payload = {
+    id: profileId,
+    caProfileId: profileId,
+    professionalProfileId: profileId,
+    userId: String(profile.user_id),
+    email: profile.email || userRow.email || null,
+    phone: profile.phone || userRow.phone || null,
+    fullName: profile.full_name,
+    name: profile.full_name,
+    image: photo,
+    photo,
+    photoUrl: photo,
+    avatarUrl: photo,
+    profilePicture: photo,
+    cnic: profile.cnic,
+    icapNumber: profile.icap_membership_no,
+    icapMembershipNo: profile.icap_membership_no,
+    membershipNumber: profile.icap_membership_no,
+    firmName: profile.firm_name || null,
+    ntn: profile.ntn || null,
+    targetSegment: profile.target_segment || null,
+    specializations,
+    qualification: profile.qualification,
+    city: profile.city,
+    officeAddress: profile.office_address || '',
+    officeLocation: profile.office_address || '',
+    address: profile.office_address || '',
+    shortBio: profile.short_bio || '',
+    fullBio: profile.full_bio || '',
+    bio: profile.full_bio || '',
+    language: profile.language || userRow.language_pref || 'en',
+    expertise,
+    serviceAreas: expertise,
+    fees: Number(profile.fees),
+    onlineFee: profile.online_fee != null ? Number(profile.online_fee) : Number(profile.fees),
+    inPersonFee: profile.inperson_fee != null ? Number(profile.inperson_fee) : Number(profile.fees),
+    packagePricing: profile.availability || '',
+    verificationStatus: profile.verification_stat === 'verified'
+      ? 'Approved'
+      : profile.verification_stat === 'rejected'
+        ? 'Rejected'
+        : 'Pending',
+    tier: tierLabel(profile.membership_tier),
+    vault,
   };
+  return { ...payload, profile: payload };
 }
 
 export async function updateCaProfile(userId, payload) {
+  const { joinList } = await import('./vaultHelper.js');
+  const { ensureAccountSchema } = await import('./ensureAccountSchema.js');
+  await ensureAccountSchema();
   await ensureCaProfile(userId);
   const expertise = payload.expertise != null
     ? stringifyServiceAreas(payload.expertise)
-    : null;
+    : (payload.specializations != null ? stringifyServiceAreas(payload.specializations) : null);
+  const name = payload.name || payload.fullName || null;
+  const office = payload.officeAddress || payload.officeLocation || payload.address || null;
+  const icap = payload.icapNumber || payload.icapMembershipNo || null;
 
   await query(
     `UPDATE ca_profiles SET
@@ -1046,14 +1135,20 @@ export async function updateCaProfile(userId, payload) {
       availability = COALESCE($9, availability),
       fees = COALESCE($10, fees),
       online_fee = COALESCE($11, online_fee),
-      inperson_fee = COALESCE($12, inperson_fee)
-     WHERE user_id = $13`,
+      inperson_fee = COALESCE($12, inperson_fee),
+      firm_name = COALESCE($13, firm_name),
+      ntn = COALESCE($14, ntn),
+      target_segment = COALESCE($15, target_segment),
+      specializations = COALESCE($16, specializations),
+      language = COALESCE($17, language),
+      phone = COALESCE($18, phone)
+     WHERE user_id = $19`,
     [
-      payload.fullName || null,
-      payload.icapMembershipNo || null,
+      name,
+      icap,
       payload.qualification || null,
       payload.city || null,
-      payload.officeLocation || payload.address || null,
+      office,
       payload.shortBio || null,
       payload.fullBio || payload.bio || null,
       expertise,
@@ -1061,9 +1156,26 @@ export async function updateCaProfile(userId, payload) {
       payload.fees != null ? Number(payload.fees) : null,
       payload.onlineFee != null ? Number(payload.onlineFee) : null,
       payload.inPersonFee != null ? Number(payload.inPersonFee) : null,
+      payload.firmName || null,
+      payload.ntn || null,
+      payload.targetSegment || null,
+      joinList(payload.specializations),
+      payload.language || null,
+      payload.phone || null,
       userId
     ]
   );
+
+  if (payload.phone || payload.email || payload.language) {
+    await query(
+      `UPDATE users SET
+         phone = COALESCE($1, phone),
+         email = COALESCE($2, email),
+         language_pref = COALESCE($3, language_pref)
+       WHERE id = $4`,
+      [payload.phone || null, payload.email ? String(payload.email).toLowerCase() : null, payload.language || null, userId]
+    );
+  }
 
   return getCaProfile(userId);
 }

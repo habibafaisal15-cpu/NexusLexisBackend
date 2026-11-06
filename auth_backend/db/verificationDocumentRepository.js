@@ -25,15 +25,20 @@ export async function ensureVerificationUploadsTable() {
 export const LAWYER_DOC_TYPES = new Set([
   'profilePhoto',
   'barCertificate',
+  'bar_license',
   'cnicFront',
   'cnicBack',
+  'cnic',
 ]);
 
 export const CA_DOC_TYPES = new Set([
   'photo',
   'caCertificate',
+  'icap',
+  'fbr_ntn',
   'cnicFront',
   'cnicBack',
+  'cnic',
 ]);
 
 export function isAllowedDocType(docType, roleHint = 'any') {

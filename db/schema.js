@@ -10,6 +10,7 @@ import { ensureCalculatorSchema } from './ensureCalculatorSchema.js';
 import { ensureKnowledgeReadsSchema } from './ensureKnowledgeReadsSchema.js';
 import { ensureLawBooksSchema } from './ensureLawBooksSchema.js';
 import { ensureVloSchema } from './ensureVloSchema.js';
+import { ensureAccountSchema } from './ensureAccountSchema.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -49,4 +50,5 @@ export async function runSchema() {
   await ensureKnowledgeReadsSchema();
   await ensureLawBooksSchema();
   await ensureVloSchema();
+  await ensureAccountSchema();
 }

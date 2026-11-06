@@ -8,6 +8,7 @@ import authRoutes from './routes/auth.js';
 import profileRoutes from './routes/profile.js';
 import adminRoutes from './routes/admin.js';
 import documentRoutes from './routes/documents.js';
+import accountRoutes from './routes/account.js';
 import { isEmailDeliveryConfigured, verifyEmailDelivery } from './services/emailService.js';
 import { isSignupOtpSkipped, isPasswordResetOtpSkipped } from './services/otpService.js';
 
@@ -107,6 +108,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/auth/profile', profileRoutes);
 app.use('/api/auth/documents', documentRoutes);
 app.use('/api/auth/admin', adminRoutes);
+app.use('/api/auth/account', accountRoutes);
 
 app.use((_req, res) => {
   res.status(404).json({ error: 'Route not found' });

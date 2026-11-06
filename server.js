@@ -20,6 +20,9 @@ import { ensureAppointmentsSchema } from './db/ensureAppointmentsSchema.js';
 import { ensureLexSchema } from './db/ensureLexSchema.js';
 import { ensureAdminPortalSchema } from './db/ensureAdminPortalSchema.js';
 import { createAdminPortalRouter } from './routes/adminPortalRoutes.js';
+import { createAccountRouter } from './routes/accountRoutes.js';
+import { createAdminUsersRouter } from './routes/adminUsersRoutes.js';
+import { ensureAccountSchema } from './db/ensureAccountSchema.js';
 import {
   createPublicCalculatorRouter,
   createAdminCalculatorRouter,
@@ -116,6 +119,11 @@ app.get('/', (_req, res) => {
       vloSubscription: 'GET /api/v2/vlo/subscription',
       vloMatters: 'GET /api/v2/vlo/matters',
       adminVlo: 'GET /api/v2/admin/vlo/subscriptions',
+      adminUsers: 'GET /api/v2/admin/users',
+      adminUserStats: 'GET /api/v2/admin/users/stats',
+      clientProfile: 'GET /api/v2/client/profile',
+      accountPassword: 'POST /api/v2/account/password',
+      accountSessions: 'GET /api/v2/account/sessions',
     },
   });
 });
@@ -144,6 +152,7 @@ app.use(asyncHandler(async (_req, _res, next) => {
     await ensureKnowledgeReadsSchema();
     await ensureLawBooksSchema();
     await ensureVloSchema();
+    await ensureAccountSchema();
   }
   next();
 }));
@@ -265,6 +274,8 @@ app.use('/api/v2/messages', createMessageRouter());
 app.use('/api/v2/lawyer/messages', createMessageRouter());
 app.use('/api/v2/ca/messages', createMessageRouter());
 app.use('/api/v2/ca', createCaRouter(UPLOADS_DIR));
+app.use('/api/v2', createAccountRouter(UPLOADS_DIR));
+app.use('/api/v2/admin/users', createAdminUsersRouter());
 
 // ─── Workspace bootstrap ────────────────────────────────────────────────────
 

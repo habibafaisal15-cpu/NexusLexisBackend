@@ -22,6 +22,14 @@ function normalizeClientBody(body) {
 
     city: body.city || null,
 
+    language: body.language || body.languagePref || null,
+
+    name: body.name || body.fullName || null,
+
+    email: body.email || null,
+
+    phone: body.phone || null,
+
     profilePhoto: docRef(body.profilePhoto || body.profile_photo),
 
     documents: body.documents || {}
@@ -248,12 +256,30 @@ export async function saveClientProfile(userId, email, body) {
 
   const data = normalizeClientBody(body);
 
-  if (body.phone) {
+  if (data.phone) {
 
-    await repo.updateUserPhone(userId, body.phone);
+    await repo.updateUserPhone(userId, data.phone);
 
-    await repo.updateAuthUserPhone(email, body.phone);
+    await repo.updateAuthUserPhone(email, data.phone);
 
+  }
+
+  if (data.language || data.name || data.email) {
+    const { query } = await import('../db/index.js');
+    await query(
+      `UPDATE users SET
+         language_pref = COALESCE($1, language_pref),
+         username = COALESCE($2, username),
+         email = COALESCE($3, email)
+       WHERE id = $4`,
+      [data.language || null, data.name || null, data.email ? String(data.email).toLowerCase() : null, userId]
+    ).catch(() => {});
+    if (data.language) {
+      await query(
+        `UPDATE auth_users SET language_pref = $1 WHERE LOWER(email) = LOWER($2)`,
+        [data.language, email]
+      ).catch(() => {});
+    }
   }
 
   const clientProfile = await repo.upsertClientProfile(userId, data);
