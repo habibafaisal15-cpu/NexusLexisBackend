@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import multer from 'multer';
 import { authMiddleware } from '../middleware/auth.js';
-import { asyncHandler } from '../../shared/lib/asyncHandler.js';
-import * as account from '../../db/accountService.js';
+import { asyncHandler } from '../lib/asyncHandler.js';
+import * as account from '../services/accountOps.js';
 
 const router = Router();
 const upload = multer({ dest: '/tmp' });
@@ -46,8 +46,7 @@ router.patch('/preferences', authMiddleware, asyncHandler(async (req, res) => {
 }));
 
 router.get('/vault', authMiddleware, asyncHandler(async (req, res) => {
-  const { listVaultForUser } = await import('../../db/vaultHelper.js');
-  res.json({ items: await listVaultForUser(userId(req)) });
+  res.json(await account.listVault(userId(req)));
 }));
 
 router.post('/client/photo', authMiddleware, upload.single('file'), asyncHandler(async (req, res) => {
